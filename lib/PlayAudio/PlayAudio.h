@@ -33,7 +33,7 @@ public:
     static uint8_t getVolume();
     PlayAudio();
     virtual ~PlayAudio();
-    virtual void play(const char* filename, size_t fpos = 0, uint32_t samplesPlayed = 0);
+    virtual bool play(const char* filename, size_t fpos = 0, uint32_t samplesPlayed = 0);  // false: not playable (UI skips it)
     void pause(bool flg = true);
     void stop();
     bool isPlaying();

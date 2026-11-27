@@ -18,7 +18,7 @@ public:
     static void decode_func();
     PlayWav();
     ~PlayWav();
-    void play(const char* filename, size_t fpos = 0, uint32_t samplesPlayed = 0);
+    bool play(const char* filename, size_t fpos = 0, uint32_t samplesPlayed = 0);
     uint32_t totalMillis();
 protected:
     static constexpr uint16_t FMT_PCM   = WavParser::FMT_PCM;

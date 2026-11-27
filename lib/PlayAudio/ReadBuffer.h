@@ -32,6 +32,8 @@ public:
     bool isFull();
     bool isFilled();
     bool isNearEmpty();
+    bool isEof();
+    bool isError();
 private:
     static constexpr size_t SECONDARY_BUFFER_SIZE = PlayAudio::RDBUF_SIZE - PlayAudio::RDBUF_THRESHOLD;
     static constexpr size_t NUM_SECONDARY_BUFFERS = 8;
@@ -42,6 +44,7 @@ private:
         size_t   pos;
         size_t   length;
         bool     reachedEof;
+        bool     error;  // read error (reachedEof is also set)
     } secondaryBufferItem_t;
     typedef struct _bindReq_t {
         FIL*   fp;
@@ -62,8 +65,9 @@ private:
     uint8_t* _ptr;
     size_t _fillThreshold;
     bool _isEof;
+    bool _isError;
     bool fill();
     void fillLoop();
-    bool stream(bindReq_t& req);
+    void stream(bindReq_t& req);
     friend void readBufferCore1Process();
 };

@@ -85,18 +85,27 @@ bool PlayAudio::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
     return true;
 }
 
-void PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
+bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     FRESULT fr;
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
+    if (fr != FR_OK) {
+        printf("ERROR: f_open %s failed (fr = %d)\r\n", filename, static_cast<int>(fr));
+        return false;
+    }
     setSamplesPlayed(samplesPlayed);
     // parse on core0 before binding so that core1 only reads the range to be played
     size_t startPos, eodPos;
     if (!parseHeader(fpos, &startPos, &eodPos)) {
         f_close(&fil);
-        return;
+        return false;
     }
     rdbuf->reqBind(&fil, startPos, eodPos);
+    if (rdbuf->isError() && rdbuf->getLeft() == 0) {  // failed at the beginning
+        rdbuf->reqUnbind();
+        f_close(&fil);
+        return false;
+    }
 
     if (reinitI2s) {
         audio_codec_dac_enable(false);
@@ -110,6 +119,7 @@ void PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
     playing = true;
     paused = false;
     rdbufWarning = false;
+    return true;
 }
 
 void PlayAudio::pause(bool flg)

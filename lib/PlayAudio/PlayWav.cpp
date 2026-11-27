@@ -33,12 +33,12 @@ PlayWav::~PlayWav()
 {
 }
 
-void PlayWav::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
+bool PlayWav::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     accum[0] = 0;
     accum[1] = 0;
     accumCount = 0;
-    PlayAudio::play(filename, fpos, samplesPlayed);
+    return PlayAudio::play(filename, fpos, samplesPlayed);
 }
 
 namespace {
@@ -77,7 +77,7 @@ bool PlayWav::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
     blockBytes    = info.blockAlign;
     bitsPerSample = info.bitsPerSample;
     dataSize      = info.dataSize;
-    reinitI2s = (sampFreq != info.sampFreq);
+    if (sampFreq != info.sampFreq) { reinitI2s = true; }  // stays requested even if this play() fails later
     sampFreq = info.sampFreq;
 
     *startPos = info.dataPos;
