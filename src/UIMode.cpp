@@ -786,12 +786,13 @@ UIMode* UIPlayMode::update()
 
 void UIPlayMode::readTag()
 {
-    char str[256];
-    
+    char str[256];  // TAG text (also used for short strings)
+    char* fname = fname_buf;  // file names can be longer than str (UTF-8, up to FF_LFN_BUF bytes)
+
     // Read TAG
     memset(str, 0, sizeof(str));
-    file_menu_get_fname(vars->idx_play, str, sizeof(str) - 1);
-    tag.loadFile(str);
+    file_menu_get_fname(vars->idx_play, fname, sizeof(fname_buf));
+    tag.loadFile(fname);
 
     // copy TAG text
     if (tag.getUTF8Track(str, sizeof(str) - 1)) {
@@ -811,8 +812,8 @@ void UIPlayMode::readTag()
     if (tag.getUTF8Title(str, sizeof(str) - 1)) {
         lcd->setTitle(str);
     } else { // display filename if no TAG
-        file_menu_get_fname(vars->idx_play, str, sizeof(str) - 1);
-        lcd->setTitle(str);
+        file_menu_get_fname(vars->idx_play, fname, sizeof(fname_buf));
+        lcd->setTitle(fname);
         /*
         file_menu_get_fname_UTF16(vars->idx_play, (char16_t*) str, sizeof(str)/2);
         lcd->setTitle(utf16_to_utf8((const char16_t*) str).c_str(), utf8);
@@ -831,8 +832,8 @@ void UIPlayMode::readTag()
         if (tag.getPicturePos(0, mime, ptype, pos, size, isUnsynced)) {
             //printf("found coverart mime: %d, ptype: %d, pos: %d, size: %d, isUnsynced: %d\r\n", mime, ptype, (int) pos, size, (int) isUnsynced);
             if (!isUnsynced && mime == jpeg && size != tagImageSize) {  // Note: judge by size to check if the image is identical to previous
-                file_menu_get_fname(vars->idx_play, str, sizeof(str) - 1);
-                lcd->setImageJpeg(str, pos, size);
+                file_menu_get_fname(vars->idx_play, fname, sizeof(fname_buf));
+                lcd->setImageJpeg(fname, pos, size);
                 tagImageSize = size;
                 loadImageFromDir = false;
             }
@@ -845,8 +846,8 @@ void UIPlayMode::readTag()
         while (idx < file_menu_get_num()) {
             if (file_menu_match_ext(idx, "jpg", 3) || file_menu_match_ext(idx, "JPG", 3) ||
                 file_menu_match_ext(idx, "jpeg", 4) || file_menu_match_ext(idx, "JPEG", 4)) {
-                file_menu_get_fname(idx, str, sizeof(str) - 1);
-                lcd->setImageJpeg(str);
+                file_menu_get_fname(idx, fname, sizeof(fname_buf));
+                lcd->setImageJpeg(fname);
                 loaded = true;
                 break;
             }
@@ -859,9 +860,8 @@ void UIPlayMode::readTag()
 
 void UIPlayMode::play()
 {
-    char str[FF_MAX_LFN];
-    memset(str, 0, sizeof(str));
-    file_menu_get_fname(vars->idx_play, str, sizeof(str) - 1);
+    char* str = play_fname_buf;  // static: UTF-8 names up to FF_LFN_BUF bytes don't fit the core0 stack nicely
+    file_menu_get_fname(vars->idx_play, str, sizeof(play_fname_buf));
     printf("%s\r\n", str);
     PlayAudio* codec = get_audio_codec();
     readTag();

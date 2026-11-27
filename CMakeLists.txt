@@ -34,6 +34,11 @@ add_executable(${bin_name}
     src/utf_conv.cpp
 )
 
+# Project FatFs configuration (src/conf/ffconf.h) overrides the one in lib/pico_fatfs
+target_include_directories(${bin_name} BEFORE PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/src/conf
+)
+
 target_link_libraries(${bin_name} 
         hardware_adc
         hardware_sleep

@@ -13,10 +13,14 @@
 #include "hardware/gpio.h"
 
 #include "common.h"
+#include "ff.h"
 #include "lcd.h"
 #include "power_manage.h"
 #include "UIMode.h"
 #include "ui_control.h"
+
+// File names are UTF-8 (src/conf/ffconf.h); fails if the submodule's ffconf.h is picked up instead
+static_assert(FF_LFN_UNICODE == 2 && FF_LFN_BUF >= FF_MAX_LFN * 3, "src/conf/ffconf.h is not in effect");
 
 static inline uint32_t _millis(void)
 {

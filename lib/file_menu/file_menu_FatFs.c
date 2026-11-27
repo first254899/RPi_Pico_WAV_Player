@@ -461,13 +461,28 @@ TCHAR* file_menu_get_fname_ptr(uint16_t order)
     }
 }
 
+// Copy a UTF-8 string into str[size] with a terminator, never cutting a multi-byte character
+static void copy_utf8(char* str, const char* src, size_t size)
+{
+    if (size == 0) { return; }
+    size_t len = strlen(src);
+    if (len >= size) {
+        len = size - 1;
+        while (len > 0 && (((unsigned char) src[len]) & 0xc0) == 0x80) { len--; }  // back to a lead byte
+    }
+    memcpy(str, src, len);
+    str[len] = '\0';
+}
+
+// str is always terminated (at most size-1 characters are stored); "" on error
 FRESULT file_menu_get_fname(uint16_t order, char* str, uint16_t size)
 {
     FRESULT fr = FR_INVALID_PARAMETER;     /* FatFs return code */
+    if (size > 0) { str[0] = '\0'; }
     file_menu_sort_entry(order, order+5);
     if (order < max_entry_cnt) {
         fr = idx_f_stat(entry_list[order], &fno);
-        strncpy(str, fno.fname, size);
+        if (fr == FR_OK) { copy_utf8(str, fno.fname, size); }
         last_order = order;
     }
     return fr;
@@ -498,9 +513,8 @@ uint16_t file_menu_get_dir_num(void)
 
 int file_menu_match_ext(uint16_t order, const char* ext, size_t ext_size)
 {
-    char name[FF_MAX_LFN];
-    file_menu_get_fname(order, name, sizeof(name));
-    char* ext_pos = strrchr(name, '.');
+    const char* name = file_menu_get_fname_ptr(order);  // no copy: UTF-8 names can be up to FF_LFN_BUF bytes
+    const char* ext_pos = strrchr(name, '.');
     if (ext_pos) {
         if (strncmp(ext_pos+1, ext, ext_size) == 0) { return 1; }
     }
