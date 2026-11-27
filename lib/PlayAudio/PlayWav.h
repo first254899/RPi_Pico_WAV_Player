@@ -26,7 +26,7 @@ protected:
     static PlayWav* g_inst;
     uint32_t dataSize;
     uint16_t blockBytes;
-    uint16_t format;  // 1: PCM, 3: IEEE float
+    uint16_t format;  // 1: PCM, 3: IEEE float (EXTENSIBLE is resolved to either by WavParser)
     uint32_t accum[2] = {};
     uint32_t accumCount;
     bool parseHeader(size_t fpos, size_t* startPos, size_t* eodPos);

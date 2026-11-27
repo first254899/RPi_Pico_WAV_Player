@@ -121,8 +121,8 @@ void PlayWav::decode()
                 case ((FMT_PCM   << 8) | 16): buf_s32 = static_cast<int32_t>((buf[base+1] << 24) | (buf[base+0] << 16)); break;
                 case ((FMT_PCM   << 8) | 24): buf_s32 = static_cast<int32_t>((buf[base+2] << 24) | (buf[base+1] << 16) | (buf[base+0] << 8)); break;
                 case ((FMT_PCM   << 8) | 32): buf_s32 = static_cast<int32_t>((buf[base+3] << 24) | (buf[base+2] << 16) | (buf[base+1] << 8) | (buf[base+0] << 0)); break;
-                case ((FMT_FLOAT << 8) | 32): buf_s32 = 0; break;
-                default: buf_s32 = 0; break;
+                case ((FMT_FLOAT << 8) | 32): buf_s32 = wavFloatToS32((static_cast<uint32_t>(buf[base+3]) << 24) | (static_cast<uint32_t>(buf[base+2]) << 16) | (static_cast<uint32_t>(buf[base+1]) << 8) | static_cast<uint32_t>(buf[base+0])); break;
+                default: buf_s32 = 0; break;  // not reached: refused by WavParser
             }
             samples[i*2+j] = static_cast<int32_t>((static_cast<int64_t>(buf_s32) * vol_table[volume] / 65536)) + DAC_ZERO;
             accum[j] += (buf_s32/65536) * (buf_s32/65536) / 32768 * 44100 / sampFreq;  // normalized to 44100 Hz's level
