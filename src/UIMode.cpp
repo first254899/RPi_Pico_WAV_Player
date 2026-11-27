@@ -866,7 +866,10 @@ void UIPlayMode::play()
     PlayAudio* codec = get_audio_codec();
     readTag();
     loadImageFromDir = false;
-    codec->play(str, vars->fpos, vars->samples_played);
+    if (!codec->play(str, vars->fpos, vars->samples_played)) {
+        // not playable (open/read error or unsupported/broken WAV): update() moves on to the next file since !isPlaying()
+        printf("skip %s\r\n", str);
+    }
     lcd->setBitRes(codec->getBitsPerSample());
     lcd->setSampleFreq(codec->getSampFreq());
     vars->fpos = 0;

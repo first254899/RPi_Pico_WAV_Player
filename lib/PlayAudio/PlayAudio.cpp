@@ -65,7 +65,7 @@ uint8_t PlayAudio::getVolume()
     return volume;
 }
 
-PlayAudio::PlayAudio() : playing(false), paused(false), rdbufWarning(false),
+PlayAudio::PlayAudio() : bound(false), playing(false), paused(false), rdbufWarning(false),
     channels(2), sampFreq(0), bitRateKbps(44100*16*2/1000), bitsPerSample(16),
     samplesPlayed(0), reinitI2s(false), levelL(0.0), levelR(0.0)
 {
@@ -76,18 +76,37 @@ PlayAudio::~PlayAudio()
 {
 }
 
-bool PlayAudio::parseSetPos(size_t fpos)
+// called on core0 before binding the file to ReadBuffer
+// decide the range [startPos, eodPos) of the stream to be decoded
+bool PlayAudio::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
 {
-    return rdbuf->seek(fpos);
+    *eodPos = static_cast<size_t>(f_size(&fil));
+    *startPos = (fpos < *eodPos) ? fpos : 0;
+    return true;
 }
 
-void PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
+bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
+    stop();  // release previous file if the track has finished by itself
     FRESULT fr;
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
-    rdbuf->reqBind(&fil);
-    parseSetPos(fpos);
+    if (fr != FR_OK) {
+        printf("ERROR: f_open %s failed (fr = %d)\r\n", filename, static_cast<int>(fr));
+        return false;
+    }
     setSamplesPlayed(samplesPlayed);
+    // parse on core0 before binding so that core1 only reads the range to be played
+    size_t startPos, eodPos;
+    if (!parseHeader(fpos, &startPos, &eodPos)) {
+        f_close(&fil);
+        return false;
+    }
+    rdbuf->reqBind(&fil, startPos, eodPos);
+    bound = true;
+    if (rdbuf->isError() && rdbuf->getLeft() == 0) {  // failed at the beginning
+        stop();
+        return false;
+    }
 
     if (reinitI2s) {
         audio_codec_dac_enable(false);
@@ -101,6 +120,7 @@ void PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
     playing = true;
     paused = false;
     rdbufWarning = false;
+    return true;
 }
 
 void PlayAudio::pause(bool flg)
@@ -108,18 +128,27 @@ void PlayAudio::pause(bool flg)
     paused = flg;
 }
 
+// not to be called from decode() (ISR) because it waits for core1
 void PlayAudio::stop()
 {
-    // stop playing at first to avoid blank noise
-    bool wasPlaying = playing;
+    // stop playing at first to avoid blank noise, decode() doesn't touch rdbuf after this
     playing = false;
     paused = false;
 
     // it takes some time to stop ReadBuffer due to secondary buffer
-    if (wasPlaying) {
-        rdbuf->reqBind(&fil, false);
+    if (bound) {
+        rdbuf->reqUnbind();
         f_close(&fil);
+        bound = false;
     }
+}
+
+// called from decode() (ISR) at the end of stream instead of stop()
+// resources are released by stop() or next play() from thread context
+void PlayAudio::finish()
+{
+    playing = false;
+    paused = false;
 }
 
 bool PlayAudio::isPlaying()
@@ -238,7 +267,7 @@ bool PlayAudio::isMuteCondition()
     if (!rdbufWarning && rdbuf->isNearEmpty()) {
         rdbufWarning = true;
         printf("AUDIO::rdbuf near empty. insert instant mute\r\n");
-    } else if (rdbufWarning && rdbuf->isFull()) {
+    } else if (rdbufWarning && rdbuf->isFilled()) {  // not isFull(): queue never gets full again near the end
         rdbufWarning = false;
     }
     return rdbufWarning;

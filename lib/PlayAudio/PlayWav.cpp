@@ -33,51 +33,64 @@ PlayWav::~PlayWav()
 {
 }
 
-void PlayWav::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
+bool PlayWav::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     accum[0] = 0;
     accum[1] = 0;
     accumCount = 0;
-    PlayAudio::play(filename, fpos, samplesPlayed);
+    return PlayAudio::play(filename, fpos, samplesPlayed);
 }
 
-void PlayWav::skipToDataChunk()
+namespace {
+
+// WavSource on FatFs (core0 only, while the file is not bound to ReadBuffer)
+class FatFsWavSource : public WavSource
 {
-    const char* buf = reinterpret_cast<const char*>(rdbuf->buf());
-    if (buf[ 0]=='R' && buf[ 1]=='I' && buf[ 2]=='F' && buf[ 3]=='F' &&
-        buf[ 8]=='W' && buf[ 9]=='A' && buf[10]=='V' && buf[11]=='E')
+public:
+    FatFsWavSource(FIL* fp) : fp(fp) {}
+    uint64_t size() { return static_cast<uint64_t>(f_size(fp)); }
+    bool readAt(uint64_t pos, void* buf, size_t len)
     {
-        size_t ofs = 12;
-        while (true) {
-            const char* chunk_id = buf + ofs;
-            const uint32_t size = getU32LE(buf + ofs + 4);
-            if (memcmp(chunk_id, "fmt ", 4) == 0) {
-                uint32_t sf;
-                format        = static_cast<uint16_t>(getU16LE(buf + ofs + 4 + 4)); // format
-                channels      = static_cast<uint16_t>(getU16LE(buf + ofs + 4 + 4 + 2)); // channels
-                sf            = static_cast<uint32_t>(getU32LE(buf + ofs + 4 + 4 + 2 + 2)); // samplerate
-                bitRateKbps   = static_cast<uint16_t>(getU32LE(buf + ofs + 4 + 4 + 2 + 2 + 4) /* bytepersec */ * 8 / 1000); // Kbps
-                blockBytes    = static_cast<uint16_t>(getU16LE(buf + ofs + 4 + 4 + 2 + 2 + 4 + 4)); // blockBytes
-                bitsPerSample = static_cast<uint16_t>(getU16LE(buf + ofs + 4 + 4 + 2 + 2 + 4 + 4 + 2)); // bitswidth
-                reinitI2s = (sampFreq != sf);
-                sampFreq = sf;
-            } else if (memcmp(chunk_id, "data", 4) == 0) {
-                dataSize = size;
-                rdbuf->setEodPos(ofs + 8 + dataSize);
-                rdbuf->shift(ofs + 8);
-                return;
-            }
-            ofs += 8 + size;
-            if (ofs + 8 > rdbuf->getLeft()) { return; }
+        if (f_lseek(fp, static_cast<FSIZE_t>(pos)) != FR_OK) { return false; }
+        UINT br;
+        if (f_read(fp, buf, static_cast<UINT>(len), &br) != FR_OK) { return false; }
+        return br == len;
+    }
+private:
+    FIL* fp;
+};
+
+}  // namespace
+
+bool PlayWav::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
+{
+    FatFsWavSource src(&fil);
+    WavParser::info_t info;
+    WavParser::result_t result = WavParser::parse(src, info);
+    if (result != WavParser::RESULT_OK) {
+        printf("WAV: skip, %s\r\n", WavParser::resultStr(result));
+        return false;
+    }
+    format        = info.format;
+    channels      = info.channels;
+    bitRateKbps   = static_cast<uint16_t>(info.bytesPerSec * 8 / 1000);
+    blockBytes    = info.blockAlign;
+    bitsPerSample = info.bitsPerSample;
+    dataSize      = info.dataSize;
+    if (sampFreq != info.sampFreq) { reinitI2s = true; }  // stays requested even if this play() fails later
+    sampFreq = info.sampFreq;
+
+    *startPos = info.dataPos;
+    *eodPos = info.dataPos + info.dataSize;
+    if (fpos != 0) {  // resume
+        if (fpos >= *startPos && fpos < *eodPos) {
+            *startPos = fpos - (fpos - info.dataPos) % blockBytes;  // align to frame
+        } else {
+            printf("WAV: resume position out of data, play from the beginning\r\n");
+            setSamplesPlayed(0);
         }
     }
-}
-
-bool PlayWav::parseSetPos(size_t fpos)
-{
-    skipToDataChunk();
-    if (fpos == 0) { return true; } // stay its position
-    return PlayAudio::parseSetPos(fpos);
+    return true;
 }
 
 void PlayWav::decode()
@@ -108,8 +121,8 @@ void PlayWav::decode()
                 case ((FMT_PCM   << 8) | 16): buf_s32 = static_cast<int32_t>((buf[base+1] << 24) | (buf[base+0] << 16)); break;
                 case ((FMT_PCM   << 8) | 24): buf_s32 = static_cast<int32_t>((buf[base+2] << 24) | (buf[base+1] << 16) | (buf[base+0] << 8)); break;
                 case ((FMT_PCM   << 8) | 32): buf_s32 = static_cast<int32_t>((buf[base+3] << 24) | (buf[base+2] << 16) | (buf[base+1] << 8) | (buf[base+0] << 0)); break;
-                case ((FMT_FLOAT << 8) | 32): buf_s32 = 0; break;
-                default: buf_s32 = 0; break;
+                case ((FMT_FLOAT << 8) | 32): buf_s32 = wavFloatToS32((static_cast<uint32_t>(buf[base+3]) << 24) | (static_cast<uint32_t>(buf[base+2]) << 16) | (static_cast<uint32_t>(buf[base+1]) << 8) | static_cast<uint32_t>(buf[base+0])); break;
+                default: buf_s32 = 0; break;  // not reached: refused by WavParser
             }
             samples[i*2+j] = static_cast<int32_t>((static_cast<int64_t>(buf_s32) * vol_table[volume] / 65536)) + DAC_ZERO;
             accum[j] += (buf_s32/65536) * (buf_s32/65536) / 32768 * 44100 / sampFreq;  // normalized to 44100 Hz's level
@@ -125,7 +138,7 @@ void PlayWav::decode()
         accumCount = 0;
     }
     rdbuf->shift(buffer->sample_count*blockBytes);
-    if (rdbuf->getLeft()/channels/blockBytes == 0) { stop(); }
+    if (rdbuf->isEof() && rdbuf->getLeft() < blockBytes) { finish(); }  // not stop(): this is in ISR
 
     #ifdef DEBUG_PLAYWAV
     uint32_t time = static_cast<uint32_t>(to_us_since_boot(get_absolute_time()) - start);

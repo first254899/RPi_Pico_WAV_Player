@@ -38,10 +38,14 @@ ReadBuffer* ReadBuffer::getInstance()
 //                set fillThreshold = 0 if using manual fill instead of auto fill
 //                set fillThreshold = size if auto fill everytime when shift (not recommended due to too many memmove)
 ReadBuffer::ReadBuffer() :
-    _size(PlayAudio::RDBUF_SIZE), _left(0), _fillThreshold(PlayAudio::RDBUF_THRESHOLD), _isEof(false)
+    _size(PlayAudio::RDBUF_SIZE), _left(0), _fillThreshold(PlayAudio::RDBUF_THRESHOLD), _isEof(false), _isError(false)
 {
     _head = reinterpret_cast<uint8_t*>(calloc(_size, sizeof(uint8_t)));
     _ptr = _head;
+    // initialize queues here (on core0) before core1 is launched, otherwise reqBind() may touch them uninitialized
+    queue_init(&bindReqQueue, sizeof(bindReq_t), 1);
+    queue_init(&bindRespQueue, sizeof(bindReq_t), 1);
+    queue_init(&secondaryBufferQueue, sizeof(secondaryBufferItem_t), NUM_SECONDARY_BUFFERS);
 }
 
 ReadBuffer::~ReadBuffer()
@@ -52,16 +56,6 @@ ReadBuffer::~ReadBuffer()
 const uint8_t* ReadBuffer::buf()
 {
     return reinterpret_cast<const uint8_t*>(_ptr);
-}
-
-void ReadBuffer::bind(FIL* fp)
-{
-    _fp = fp;
-    _ptr = _head;
-    _left = 0;
-    _isEof = false;
-    _eodPos = f_size(_fp);
-    _isEod = false;
 }
 
 bool ReadBuffer::fill()
@@ -87,6 +81,7 @@ bool ReadBuffer::fill()
     _pos = item.pos;
     _left += item.length;
     _isEof = item.reachedEof;
+    _isError = item.error;
     if (space > item.length) {
         memset(_head + _left, 0, space - item.length);  // fill 0
     }
@@ -107,21 +102,12 @@ bool ReadBuffer::shiftAll()
     return shift(_left);
 }
 
-void ReadBuffer::setEodPos(size_t pos)
-{
-    if (pos >= f_size(_fp)) { return; }
-    _eodPos = pos;
-}
-
+// rebind from pos, must not be called while decode() consumes the buffer
 bool ReadBuffer::seek(size_t pos)
 {
-    if (pos >= f_size(_fp)) { return false; }
     if (pos >= _eodPos) { return false; }
-    size_t eodPos = _eodPos;
-    reqBind(_fp, false);  // disconnect secondaryBuffer (dispose current secondaryBuffer)
-    f_lseek(_fp, pos);   // seek (move reading point)
-    reqBind(_fp);         // reconnect
-    _eodPos = eodPos;
+    reqUnbind();  // disconnect secondaryBuffer (dispose current secondaryBuffer)
+    reqBind(_fp, pos, _eodPos);  // reconnect from new position
     return true;
 }
 
@@ -140,93 +126,147 @@ bool ReadBuffer::isFull()
     return queue_is_full(&secondaryBufferQueue);
 }
 
+// all data till the end of stream (or till a read error) has been moved to buf()
+bool ReadBuffer::isEof()
+{
+    return _isEof;
+}
+
+// stream was terminated by a read error
+bool ReadBuffer::isError()
+{
+    return _isError;
+}
+
+// enough data is buffered: queue is full or all data till the end has been read
+bool ReadBuffer::isFilled()
+{
+    return _isEod || queue_is_full(&secondaryBufferQueue);
+}
+
 bool ReadBuffer::isNearEmpty()
 {
     return (!_isEod && queue_get_level(&secondaryBufferQueue) <= NUM_SECONDARY_BUFFERS / 4);
 }
 
-void ReadBuffer::reqBind(FIL* fp, bool flag)
+void ReadBuffer::reqBind(FIL* fp, size_t startPos, size_t eodPos)
 {
-    bindReq_t req = {fp, flag};
+    // reset core0 side (core1 doesn't touch these)
+    _fp = fp;
+    _ptr = _head;
+    _left = 0;
+    _pos = startPos;
+    _eodPos = eodPos;
+    _isEof = false;
+    _isError = false;
+    bindReq_t req = {fp, startPos, eodPos, true};
     // send request
-    queue_try_add(&bindReqQueue, &req);
-    // wait response
+    queue_add_blocking(&bindReqQueue, &req);
+    // wait response, which core1 sends when initial fill is done
+    // (secondaryBufferQueue is full or holds everything till the end of data)
     queue_remove_blocking(&bindRespQueue, &req);
-    if (flag) {
-        while (!queue_is_full(&secondaryBufferQueue)) {}
-        fill();
+    fill();
+}
+
+void ReadBuffer::reqUnbind()
+{
+    bindReq_t req = {nullptr, 0, 0, false};
+    // send request
+    queue_add_blocking(&bindReqQueue, &req);
+    // wait response (core1 stopped reading and discarded all data in secondaryBufferQueue)
+    queue_remove_blocking(&bindRespQueue, &req);
+}
+
+// core1: serve bind/unbind requests forever
+void ReadBuffer::fillLoop()
+{
+    bindReq_t req;
+    secondaryBufferItem_t item;
+    queue_remove_blocking(&bindReqQueue, &req);
+    while (true) {
+        // discard all data of previous binding (core0 doesn't consume it while waiting for the response)
+        while (queue_try_remove(&secondaryBufferQueue, &item)) {}
+        if (req.flag) {
+            stream(req);  // returns with next request in req
+        } else {
+            queue_add_blocking(&bindRespQueue, &req);  // response to unbind
+            queue_remove_blocking(&bindReqQueue, &req);
+        }
     }
 }
 
-void ReadBuffer::fillLoop()
+// core1: stream [req.startPos, req.eodPos) of req.fp into secondaryBufferQueue
+// return when next request arrives, which is stored in req
+// a read error terminates the stream with an error item but core1 keeps serving requests
+void ReadBuffer::stream(bindReq_t& req)
 {
+    FIL* const fp = req.fp;
+    const size_t eodPos = req.eodPos;
+    size_t pos = req.startPos;
     int id = 0;
-    FIL* fp;
-    queue_init(&bindReqQueue, sizeof(bindReq_t), 1);
-    queue_init(&bindRespQueue, sizeof(bindReq_t), 1);
-    queue_init(&secondaryBufferQueue, sizeof(secondaryBufferItem_t), NUM_SECONDARY_BUFFERS);
-    bindReq_t req;
+    bool done = false;   // reached eodPos, no more read
+    bool ready = false;  // response to bind has been sent
     secondaryBufferItem_t item;
 
-    while (true) {
-        // expecting reqBind(true)
-        while (queue_is_empty(&bindReqQueue)) {}
-        queue_remove_blocking(&bindReqQueue, &req);
-        if (req.flag) {
-            fp = req.fp;
-            bind(fp);
-            item.pos = f_tell(fp);
-            item.reachedEof = _isEod || static_cast<bool>(f_eof(fp));
-        }
-        queue_try_add(&bindRespQueue, &req);  // response regardless of flag
-        if (!req.flag) { continue; }  // retry if reqBind(false)
+    _isEod = false;
+    bool seekError = (pos < eodPos && f_lseek(fp, pos) != FR_OK);
+    if (pos >= eodPos || seekError) {
+        // nothing to read: zero-length EOF item
+        if (seekError) { printf("ERROR: ReadBuffer f_lseek failed\r\n"); }
+        done = true;
+        item = {&secondaryBuffer[0], pos, 0, true, seekError};
+        queue_try_add(&secondaryBufferQueue, &item);
+        _isEod = true;
+    }
 
-        while (!item.reachedEof) {
-            // read from file to store secondaryBuffer
-            while (!queue_is_full(&secondaryBufferQueue)) {
-                // read at once for max efficiency as min of either till the end of buffer or spare number of queue
-                int level = static_cast<int>(queue_get_level(&secondaryBufferQueue));
-                int reqN = NUM_SECONDARY_BUFFERS - ((id > level) ? id : level);
-                UINT reqBr;
-                if (item.pos + SECONDARY_BUFFER_SIZE * reqN >= _eodPos) {
-                    reqBr = _eodPos - item.pos;
-                    _isEod = true;
-                } else {
-                    reqBr = SECONDARY_BUFFER_SIZE * reqN;
-                }
-                UINT br;
-                FRESULT fr = f_read(fp, &secondaryBuffer[SECONDARY_BUFFER_SIZE * id], reqBr, &br);
-                _isEod |= static_cast<bool>(f_eof(fp));
-                if (fr != FR_OK || br == 0) { return; }
-                // put on queue divided by SECONDARY_BUFFER_SIZE
-                int readN = (br + SECONDARY_BUFFER_SIZE - 1) / SECONDARY_BUFFER_SIZE;
-                for (int i = 0; i < readN; i++) {
-                    if (i < readN - 1) {
-                        item.length = SECONDARY_BUFFER_SIZE;
-                        item.reachedEof = false;
-                    } else {
-                        item.length = br - SECONDARY_BUFFER_SIZE * i;
-                        item.reachedEof = _isEod;
-                    }
-                    item.ptr = &secondaryBuffer[SECONDARY_BUFFER_SIZE * id];
-                    item.pos += item.length;
-                    queue_try_add(&secondaryBufferQueue, &item);
-                    id = (id + 1) % NUM_SECONDARY_BUFFERS;
-                }
-                if (item.reachedEof) { break; }
+    while (true) {
+        // acceptance of next request (only after the response to bind, otherwise it's not expected)
+        if (ready && queue_try_remove(&bindReqQueue, &req)) { return; }
+
+        // read from file to store secondaryBuffer
+        if (!done && !queue_is_full(&secondaryBufferQueue)) {
+            // read at once for max efficiency as min of either till the end of buffer or spare number of queue
+            // slots [id, id + reqN) are free because the queue holds the 'level' slots just before id
+            int level = static_cast<int>(queue_get_level(&secondaryBufferQueue));
+            int reqN = NUM_SECONDARY_BUFFERS - ((id > level) ? id : level);
+            // never read at or beyond eodPos (pos < eodPos is kept while !done)
+            size_t remain = eodPos - pos;
+            size_t reqBr = SECONDARY_BUFFER_SIZE * reqN;
+            if (reqBr >= remain) {
+                reqBr = remain;
+                done = true;
             }
-            // acceptance of reqBind(false)
-            if (!queue_is_empty(&bindReqQueue)) {
-                queue_remove_blocking(&bindReqQueue, &req);
-                if (!req.flag) {
-                    // discard all data in senondaryBufferQueue
-                    while (!queue_is_empty(&secondaryBufferQueue)) {
-                        queue_remove_blocking(&secondaryBufferQueue, &item);
-                    }
-                }
-                queue_try_add(&bindRespQueue, &req);  // response regardless of flag
-                if (!req.flag) { break; }  // start over if reqBind(false), otherwise ignore
+            UINT br;
+            FRESULT fr = f_read(fp, &secondaryBuffer[SECONDARY_BUFFER_SIZE * id], static_cast<UINT>(reqBr), &br);
+            // br < reqBr: file is shorter than expected. data read before an error is still valid
+            bool error = (fr != FR_OK || br < reqBr);
+            if (error) {
+                printf("ERROR: ReadBuffer f_read failed (fr = %d, %d/%d bytes)\r\n", static_cast<int>(fr), static_cast<int>(br), static_cast<int>(reqBr));
+                done = true;
             }
+            pos += br;
+            // put on queue divided by SECONDARY_BUFFER_SIZE (at least one item to carry EOF)
+            int readN = (br + SECONDARY_BUFFER_SIZE - 1) / SECONDARY_BUFFER_SIZE;
+            if (readN == 0) { readN = 1; }
+            size_t itemPos = pos - br;
+            for (int i = 0; i < readN; i++) {
+                item.ptr = &secondaryBuffer[SECONDARY_BUFFER_SIZE * id];
+                item.length = (i < readN - 1) ? SECONDARY_BUFFER_SIZE : br - SECONDARY_BUFFER_SIZE * i;  // 0 if br == 0
+                itemPos += item.length;
+                item.pos = itemPos;
+                item.reachedEof = done && (i == readN - 1);
+                item.error = error && item.reachedEof;
+                queue_try_add(&secondaryBufferQueue, &item);  // never fails: readN <= reqN free slots
+                id = (id + 1) % NUM_SECONDARY_BUFFERS;
+            }
+            // only after queueing: isNearEmpty() must not report false while the last items are not in the queue yet
+            if (done) { _isEod = true; }
+        }
+
+        // response to bind when initial fill is done
+        if (!ready && (done || queue_is_full(&secondaryBufferQueue))) {
+            queue_add_blocking(&bindRespQueue, &req);
+            ready = true;
         }
     }
 }

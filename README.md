@@ -10,7 +10,8 @@ RPi_Pico_WAV_Player is Hi-Res WAV player for Raspberry Pi Pico / Pico 2.
 This project features:
 * Playback up to Hi-Res WAV format
   * Channel: Mono, Stereo
-  * Bit resolution: 16bit, 24bit
+  * Bit resolution: 16bit, 24bit, 32bit PCM and 32bit IEEE float
+  * WAVE_FORMAT_EXTENSIBLE (as written by ffmpeg/sox for 24bit or over 48KHz) is supported
   * Sampling frequency: 44.1KHz, 48KHz, 88.2KHz, 96KHz, 176.4KHz and 192KHz
 * SD Card interface (exFAT supported)
 * 160x80 LCD display
