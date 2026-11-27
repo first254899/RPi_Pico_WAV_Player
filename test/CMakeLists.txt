@@ -13,5 +13,20 @@ target_include_directories(test_wav_parser PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../
 target_compile_options(test_wav_parser PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 target_link_options(test_wav_parser PRIVATE -fsanitize=address,undefined)
 
+# ReadBuffer core0/core1 protocol: copy the sources next to nothing else so that
+# their quoted includes ("PlayAudio.h", "ff.h", pico/...) resolve to test/stubs
+find_package(Threads REQUIRED)
+configure_file(${CMAKE_CURRENT_LIST_DIR}/../lib/PlayAudio/ReadBuffer.h ${CMAKE_CURRENT_BINARY_DIR}/rb/ReadBuffer.h COPYONLY)
+configure_file(${CMAKE_CURRENT_LIST_DIR}/../lib/PlayAudio/ReadBuffer.cpp ${CMAKE_CURRENT_BINARY_DIR}/rb/ReadBuffer.cpp COPYONLY)
+add_executable(test_read_buffer
+    test_read_buffer.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/rb/ReadBuffer.cpp
+)
+target_include_directories(test_read_buffer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/rb ${CMAKE_CURRENT_LIST_DIR}/stubs)
+target_compile_options(test_read_buffer PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(test_read_buffer PRIVATE -fsanitize=address,undefined)
+target_link_libraries(test_read_buffer PRIVATE Threads::Threads)
+
 enable_testing()
 add_test(NAME wav_parser COMMAND test_wav_parser)
+add_test(NAME read_buffer COMMAND test_read_buffer)
