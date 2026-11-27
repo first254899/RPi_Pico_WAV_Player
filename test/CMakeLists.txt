@@ -42,8 +42,20 @@ target_include_directories(test_gain_ramp PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../l
 target_compile_options(test_gain_ramp PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 target_link_options(test_gain_ramp PRIVATE -fsanitize=address,undefined)
 
+# TagRead error paths (leaks are reported by LeakSanitizer); TagRead itself is built without -Werror
+add_executable(test_tag_read
+    test_tag_read.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/TagRead.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/utf_conv.cpp
+)
+target_include_directories(test_tag_read PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs ${CMAKE_CURRENT_LIST_DIR}/../src)
+target_compile_options(test_tag_read PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+set_source_files_properties(test_tag_read.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+target_link_options(test_tag_read PRIVATE -fsanitize=address,undefined)
+
 enable_testing()
 add_test(NAME wav_parser COMMAND test_wav_parser)
 add_test(NAME read_buffer COMMAND test_read_buffer)
 add_test(NAME lcd_text COMMAND test_lcd_text)
 add_test(NAME gain_ramp COMMAND test_gain_ramp)
+add_test(NAME tag_read COMMAND test_tag_read)

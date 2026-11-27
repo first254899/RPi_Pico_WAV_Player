@@ -26,4 +26,8 @@ ctest --test-dir build-test --output-on-failure
   unity bit-exact) and a model of `PlayWav::decode()` buffer by buffer: play start, pause/unpause, stop, track end
   (gain 0 on the last frame, no read past the end), underrun entry/recovery, volume changes, random sequences.
 
+* `test_tag_read`: `src/TagRead.*` against the FatFs stub: ID3v2.2/2.3/2.4 tags, every error exit of the frame
+  parser (short header/data reads, 0xFF frame id, unsupported flags), RIFF `id3 ` and `LIST INFO` chunks, a WAV
+  shorter than an ID3v1 block, 200 reloads. LeakSanitizer fails the run on any leak.
+
 All are built with AddressSanitizer and UndefinedBehaviorSanitizer.
