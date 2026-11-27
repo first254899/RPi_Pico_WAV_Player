@@ -53,9 +53,23 @@ target_compile_options(test_tag_read PRIVATE -fsanitize=address,undefined -fno-s
 set_source_files_properties(test_tag_read.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
 target_link_options(test_tag_read PRIVATE -fsanitize=address,undefined)
 
+# file menu (C, unmodified) against an in-memory FatFs (test/stubs_c) with fault injection;
+# its allocations go through test_malloc/test_calloc to inject out-of-memory
+add_executable(test_file_menu
+    test_file_menu.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu/file_menu_FatFs.c
+)
+target_include_directories(test_file_menu PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs_c ${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu)
+target_compile_options(test_file_menu PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
+set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu/file_menu_FatFs.c PROPERTIES
+    COMPILE_DEFINITIONS "malloc=test_malloc;calloc=test_calloc"
+    COMPILE_OPTIONS "-Wno-discarded-qualifiers")
+target_link_options(test_file_menu PRIVATE -fsanitize=address,undefined)
+
 enable_testing()
 add_test(NAME wav_parser COMMAND test_wav_parser)
 add_test(NAME read_buffer COMMAND test_read_buffer)
 add_test(NAME lcd_text COMMAND test_lcd_text)
 add_test(NAME gain_ramp COMMAND test_gain_ramp)
 add_test(NAME tag_read COMMAND test_tag_read)
+add_test(NAME file_menu COMMAND test_file_menu)

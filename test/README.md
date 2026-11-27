@@ -30,4 +30,8 @@ ctest --test-dir build-test --output-on-failure
   parser (short header/data reads, 0xFF frame id, unsupported flags), RIFF `id3 ` and `LIST INFO` chunks, a WAV
   shorter than an ID3v1 block, 200 reloads. LeakSanitizer fails the run on any leak.
 
+* `test_file_menu`: `lib/file_menu/file_menu_FatFs.c` (built as C, unmodified) against an in-memory directory tree
+  (`test/stubs_c`): UTF-8 names and their order, bounded name copies, extension match, `f_opendir` failure in
+  `file_menu_ch_dir()`, `f_readdir` errors (counting and lookup), out of memory in each allocation, leaks.
+
 All are built with AddressSanitizer and UndefinedBehaviorSanitizer.
