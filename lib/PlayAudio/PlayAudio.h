@@ -69,7 +69,7 @@ protected:
     void incSamplesPlayed(uint32_t inc);
     uint32_t getSamplesPlayed();
     void setLevelInt(uint32_t levelIntL, uint32_t levelIntR);
-    virtual bool parseSetPos(size_t fpos);
+    virtual bool parseHeader(size_t fpos, size_t* startPos, size_t* eodPos);
     virtual void decode();
     virtual bool isMuteCondition();
 private:

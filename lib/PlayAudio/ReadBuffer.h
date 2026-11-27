@@ -20,11 +20,12 @@ public:
     static ReadBuffer* getInstance();  // Singleton
     ReadBuffer();
     virtual ~ReadBuffer();
-    void reqBind(FIL* fp, bool flag = true);
+    // core1 streams [startPos, eodPos) of fp, never reading beyond eodPos
+    void reqBind(FIL* fp, size_t startPos, size_t eodPos);
+    void reqUnbind();
     const uint8_t* buf();
     bool shift(size_t bytes);
     bool shiftAll();
-    void setEodPos(size_t pos);
     bool seek(size_t pos);
     size_t getLeft();
     size_t tell();
@@ -42,8 +43,10 @@ private:
         bool     reachedEof;
     } secondaryBufferItem_t;
     typedef struct _bindReq_t {
-        FIL* fp;
-        bool flag;
+        FIL*   fp;
+        size_t startPos;  // file position to start reading
+        size_t eodPos;    // end of data: core1 never reads at or beyond this position
+        bool   flag;      // true: bind, false: unbind
     } bindReq_t;
     queue_t secondaryBufferQueue;
     queue_t bindReqQueue;
@@ -52,13 +55,12 @@ private:
     size_t _size;
     size_t _pos;
     size_t _left;
-    size_t _eodPos;
-    bool _isEod;
+    size_t _eodPos;  // core0 copy of bound eodPos (for seek)
+    volatile bool _isEod;  // written by core1, read by core0
     uint8_t* _head;
     uint8_t* _ptr;
     size_t _fillThreshold;
     bool _isEof;
-    void bind(FIL* fp);
     bool fill();
     void fillLoop();
     friend void readBufferCore1Process();

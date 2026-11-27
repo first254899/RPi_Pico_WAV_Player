@@ -58,16 +58,6 @@ const uint8_t* ReadBuffer::buf()
     return reinterpret_cast<const uint8_t*>(_ptr);
 }
 
-void ReadBuffer::bind(FIL* fp)
-{
-    _fp = fp;
-    _ptr = _head;
-    _left = 0;
-    _isEof = false;
-    _eodPos = f_size(_fp);
-    _isEod = false;
-}
-
 bool ReadBuffer::fill()
 {
     if (_isEof) { return false; }
@@ -111,21 +101,11 @@ bool ReadBuffer::shiftAll()
     return shift(_left);
 }
 
-void ReadBuffer::setEodPos(size_t pos)
-{
-    if (pos >= f_size(_fp)) { return; }
-    _eodPos = pos;
-}
-
 bool ReadBuffer::seek(size_t pos)
 {
-    if (pos >= f_size(_fp)) { return false; }
     if (pos >= _eodPos) { return false; }
-    size_t eodPos = _eodPos;
-    reqBind(_fp, false);  // disconnect secondaryBuffer (dispose current secondaryBuffer)
-    f_lseek(_fp, pos);   // seek (move reading point)
-    reqBind(_fp);         // reconnect
-    _eodPos = eodPos;
+    reqUnbind();  // disconnect secondaryBuffer (dispose current secondaryBuffer)
+    reqBind(_fp, pos, _eodPos);  // reconnect from new position
     return true;
 }
 
@@ -149,55 +129,84 @@ bool ReadBuffer::isNearEmpty()
     return (!_isEod && queue_get_level(&secondaryBufferQueue) <= NUM_SECONDARY_BUFFERS / 4);
 }
 
-void ReadBuffer::reqBind(FIL* fp, bool flag)
+void ReadBuffer::reqBind(FIL* fp, size_t startPos, size_t eodPos)
 {
-    bindReq_t req = {fp, flag};
+    // reset core0 side (core1 doesn't touch these)
+    _fp = fp;
+    _ptr = _head;
+    _left = 0;
+    _pos = startPos;
+    _eodPos = eodPos;
+    _isEof = false;
+    bindReq_t req = {fp, startPos, eodPos, true};
     // send request
-    queue_try_add(&bindReqQueue, &req);
+    queue_add_blocking(&bindReqQueue, &req);
     // wait response
     queue_remove_blocking(&bindRespQueue, &req);
-    if (flag) {
-        while (!queue_is_full(&secondaryBufferQueue)) {}
-        fill();
-    }
+    while (!queue_is_full(&secondaryBufferQueue)) {}
+    fill();
+}
+
+void ReadBuffer::reqUnbind()
+{
+    bindReq_t req = {nullptr, 0, 0, false};
+    // send request
+    queue_add_blocking(&bindReqQueue, &req);
+    // wait response (core1 has discarded all data in secondaryBufferQueue)
+    queue_remove_blocking(&bindRespQueue, &req);
 }
 
 void ReadBuffer::fillLoop()
 {
     int id = 0;
     FIL* fp;
+    size_t eodPos = 0;
     bindReq_t req;
     secondaryBufferItem_t item;
 
     while (true) {
-        // expecting reqBind(true)
-        while (queue_is_empty(&bindReqQueue)) {}
+        // expecting bind request
         queue_remove_blocking(&bindReqQueue, &req);
         if (req.flag) {
             fp = req.fp;
-            bind(fp);
-            item.pos = f_tell(fp);
-            item.reachedEof = _isEod || static_cast<bool>(f_eof(fp));
+            eodPos = req.eodPos;
+            _isEod = false;
+            id = 0;
+            item.pos = req.startPos;
+            item.reachedEof = false;
+            if (f_lseek(fp, req.startPos) != FR_OK || req.startPos >= eodPos) {
+                // nothing to read: zero-length EOF item
+                _isEod = true;
+                item.ptr = &secondaryBuffer[0];
+                item.length = 0;
+                item.reachedEof = true;
+                queue_try_add(&secondaryBufferQueue, &item);
+            }
+        } else {
+            // discard all data in secondaryBufferQueue (unbind while not streaming)
+            while (queue_try_remove(&secondaryBufferQueue, &item)) {}
         }
         queue_try_add(&bindRespQueue, &req);  // response regardless of flag
-        if (!req.flag) { continue; }  // retry if reqBind(false)
+        if (!req.flag) { continue; }  // retry if unbind
 
-        while (!item.reachedEof) {
+        while (true) {
             // read from file to store secondaryBuffer
-            while (!queue_is_full(&secondaryBufferQueue)) {
+            while (!item.reachedEof && !queue_is_full(&secondaryBufferQueue)) {
                 // read at once for max efficiency as min of either till the end of buffer or spare number of queue
                 int level = static_cast<int>(queue_get_level(&secondaryBufferQueue));
                 int reqN = NUM_SECONDARY_BUFFERS - ((id > level) ? id : level);
+                // never read at or beyond eodPos (item.pos < eodPos is kept here)
+                size_t remain = eodPos - item.pos;
                 UINT reqBr;
-                if (item.pos + SECONDARY_BUFFER_SIZE * reqN >= _eodPos) {
-                    reqBr = _eodPos - item.pos;
+                if (SECONDARY_BUFFER_SIZE * reqN >= remain) {
+                    reqBr = remain;
                     _isEod = true;
                 } else {
                     reqBr = SECONDARY_BUFFER_SIZE * reqN;
                 }
                 UINT br;
                 FRESULT fr = f_read(fp, &secondaryBuffer[SECONDARY_BUFFER_SIZE * id], reqBr, &br);
-                _isEod |= static_cast<bool>(f_eof(fp));
+                if (f_eof(fp)) { _isEod = true; }
                 if (fr != FR_OK || br == 0) { return; }
                 // put on queue divided by SECONDARY_BUFFER_SIZE
                 int readN = (br + SECONDARY_BUFFER_SIZE - 1) / SECONDARY_BUFFER_SIZE;
@@ -214,19 +223,15 @@ void ReadBuffer::fillLoop()
                     queue_try_add(&secondaryBufferQueue, &item);
                     id = (id + 1) % NUM_SECONDARY_BUFFERS;
                 }
-                if (item.reachedEof) { break; }
             }
-            // acceptance of reqBind(false)
-            if (!queue_is_empty(&bindReqQueue)) {
-                queue_remove_blocking(&bindReqQueue, &req);
+            // acceptance of unbind
+            if (queue_try_remove(&bindReqQueue, &req)) {
                 if (!req.flag) {
-                    // discard all data in senondaryBufferQueue
-                    while (!queue_is_empty(&secondaryBufferQueue)) {
-                        queue_remove_blocking(&secondaryBufferQueue, &item);
-                    }
+                    // discard all data in secondaryBufferQueue
+                    while (queue_try_remove(&secondaryBufferQueue, &item)) {}
                 }
                 queue_try_add(&bindRespQueue, &req);  // response regardless of flag
-                if (!req.flag) { break; }  // start over if reqBind(false), otherwise ignore
+                if (!req.flag) { break; }  // start over if unbind, otherwise ignore
             }
         }
     }

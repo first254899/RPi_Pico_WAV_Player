@@ -76,18 +76,27 @@ PlayAudio::~PlayAudio()
 {
 }
 
-bool PlayAudio::parseSetPos(size_t fpos)
+// called on core0 before binding the file to ReadBuffer
+// decide the range [startPos, eodPos) of the stream to be decoded
+bool PlayAudio::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
 {
-    return rdbuf->seek(fpos);
+    *eodPos = static_cast<size_t>(f_size(&fil));
+    *startPos = (fpos < *eodPos) ? fpos : 0;
+    return true;
 }
 
 void PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     FRESULT fr;
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
-    rdbuf->reqBind(&fil);
-    parseSetPos(fpos);
     setSamplesPlayed(samplesPlayed);
+    // parse on core0 before binding so that core1 only reads the range to be played
+    size_t startPos, eodPos;
+    if (!parseHeader(fpos, &startPos, &eodPos)) {
+        f_close(&fil);
+        return;
+    }
+    rdbuf->reqBind(&fil, startPos, eodPos);
 
     if (reinitI2s) {
         audio_codec_dac_enable(false);
@@ -117,7 +126,7 @@ void PlayAudio::stop()
 
     // it takes some time to stop ReadBuffer due to secondary buffer
     if (wasPlaying) {
-        rdbuf->reqBind(&fil, false);
+        rdbuf->reqUnbind();
         f_close(&fil);
     }
 }
