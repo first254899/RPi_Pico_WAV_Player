@@ -214,9 +214,9 @@ void ReadBuffer::stream(bindReq_t& req)
         // nothing to read: zero-length EOF item
         if (seekError) { printf("ERROR: ReadBuffer f_lseek failed\r\n"); }
         done = true;
-        _isEod = true;
         item = {&secondaryBuffer[0], pos, 0, true, seekError};
         queue_try_add(&secondaryBufferQueue, &item);
+        _isEod = true;
     }
 
     while (true) {
@@ -245,7 +245,6 @@ void ReadBuffer::stream(bindReq_t& req)
                 done = true;
             }
             pos += br;
-            if (done) { _isEod = true; }  // before queueing the last item for isNearEmpty()
             // put on queue divided by SECONDARY_BUFFER_SIZE (at least one item to carry EOF)
             int readN = (br + SECONDARY_BUFFER_SIZE - 1) / SECONDARY_BUFFER_SIZE;
             if (readN == 0) { readN = 1; }
@@ -260,6 +259,8 @@ void ReadBuffer::stream(bindReq_t& req)
                 queue_try_add(&secondaryBufferQueue, &item);  // never fails: readN <= reqN free slots
                 id = (id + 1) % NUM_SECONDARY_BUFFERS;
             }
+            // only after queueing: isNearEmpty() must not report false while the last items are not in the queue yet
+            if (done) { _isEod = true; }
         }
 
         // response to bind when initial fill is done
