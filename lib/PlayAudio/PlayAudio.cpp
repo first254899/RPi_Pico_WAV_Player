@@ -247,7 +247,7 @@ bool PlayAudio::isMuteCondition()
     if (!rdbufWarning && rdbuf->isNearEmpty()) {
         rdbufWarning = true;
         printf("AUDIO::rdbuf near empty. insert instant mute\r\n");
-    } else if (rdbufWarning && rdbuf->isFull()) {
+    } else if (rdbufWarning && rdbuf->isFilled()) {  // not isFull(): queue never gets full again near the end
         rdbufWarning = false;
     }
     return rdbufWarning;

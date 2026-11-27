@@ -30,6 +30,7 @@ public:
     size_t getLeft();
     size_t tell();
     bool isFull();
+    bool isFilled();
     bool isNearEmpty();
 private:
     static constexpr size_t SECONDARY_BUFFER_SIZE = PlayAudio::RDBUF_SIZE - PlayAudio::RDBUF_THRESHOLD;
@@ -63,5 +64,6 @@ private:
     bool _isEof;
     bool fill();
     void fillLoop();
+    bool stream(bindReq_t& req);
     friend void readBufferCore1Process();
 };
