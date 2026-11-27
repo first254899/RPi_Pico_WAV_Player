@@ -42,6 +42,10 @@ ReadBuffer::ReadBuffer() :
 {
     _head = reinterpret_cast<uint8_t*>(calloc(_size, sizeof(uint8_t)));
     _ptr = _head;
+    // initialize queues here (on core0) before core1 is launched, otherwise reqBind() may touch them uninitialized
+    queue_init(&bindReqQueue, sizeof(bindReq_t), 1);
+    queue_init(&bindRespQueue, sizeof(bindReq_t), 1);
+    queue_init(&secondaryBufferQueue, sizeof(secondaryBufferItem_t), NUM_SECONDARY_BUFFERS);
 }
 
 ReadBuffer::~ReadBuffer()
@@ -162,9 +166,6 @@ void ReadBuffer::fillLoop()
 {
     int id = 0;
     FIL* fp;
-    queue_init(&bindReqQueue, sizeof(bindReq_t), 1);
-    queue_init(&bindRespQueue, sizeof(bindReq_t), 1);
-    queue_init(&secondaryBufferQueue, sizeof(secondaryBufferItem_t), NUM_SECONDARY_BUFFERS);
     bindReq_t req;
     secondaryBufferItem_t item;
 
