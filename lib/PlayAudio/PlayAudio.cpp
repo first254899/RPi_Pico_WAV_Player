@@ -42,6 +42,7 @@ void PlayAudio::initialize()
 void PlayAudio::finalize()
 {
     spin_lock_unclaim(spin_lock_get_num(spin_lock));
+    ap = nullptr;  // decode() must not use the pool after deinit
     i2s_audio_deinit();
 }
 

@@ -64,4 +64,10 @@ target_compile_definitions(${bin_name} PRIVATE
 #    NO_BATTERY_VOLTAGE_CHECK
 )
 
+# printf in pico_audio_i2s_32b's audio_i2s.c goes to i2s_lib_printf() (lib/PlayAudio/i2s_audio_init.cpp),
+# which drops messages printed from the DMA IRQ (sample rate retune) instead of calling stdio there
+set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/lib/pico_audio_i2s_32b/src/audio_i2s.c
+    PROPERTIES COMPILE_DEFINITIONS "printf=i2s_lib_printf"
+)
+
 pico_add_extra_outputs(${bin_name})
