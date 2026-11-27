@@ -50,9 +50,10 @@ protected:
     static uint8_t volume;
     static const int32_t vol_table[101];
     FIL fil;
-    bool playing;
-    bool paused;
-    bool rdbufWarning;
+    bool bound;  // fil is open and bound to rdbuf (core0 thread context only)
+    volatile bool playing;  // shared with decode() in I2S DMA ISR
+    volatile bool paused;
+    volatile bool rdbufWarning;
     uint16_t channels;
     uint32_t sampFreq;
     uint16_t bitRateKbps;
@@ -69,6 +70,7 @@ protected:
     void incSamplesPlayed(uint32_t inc);
     uint32_t getSamplesPlayed();
     void setLevelInt(uint32_t levelIntL, uint32_t levelIntR);
+    void finish();
     virtual bool parseHeader(size_t fpos, size_t* startPos, size_t* eodPos);
     virtual void decode();
     virtual bool isMuteCondition();

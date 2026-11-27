@@ -138,7 +138,7 @@ void PlayWav::decode()
         accumCount = 0;
     }
     rdbuf->shift(buffer->sample_count*blockBytes);
-    if (rdbuf->getLeft()/channels/blockBytes == 0) { stop(); }
+    if (rdbuf->isEof() && rdbuf->getLeft() < blockBytes) { finish(); }  // not stop(): this is in ISR
 
     #ifdef DEBUG_PLAYWAV
     uint32_t time = static_cast<uint32_t>(to_us_since_boot(get_absolute_time()) - start);

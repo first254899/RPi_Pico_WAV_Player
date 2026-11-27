@@ -65,7 +65,7 @@ uint8_t PlayAudio::getVolume()
     return volume;
 }
 
-PlayAudio::PlayAudio() : playing(false), paused(false), rdbufWarning(false),
+PlayAudio::PlayAudio() : bound(false), playing(false), paused(false), rdbufWarning(false),
     channels(2), sampFreq(0), bitRateKbps(44100*16*2/1000), bitsPerSample(16),
     samplesPlayed(0), reinitI2s(false), levelL(0.0), levelR(0.0)
 {
@@ -87,6 +87,7 @@ bool PlayAudio::parseHeader(size_t fpos, size_t* startPos, size_t* eodPos)
 
 bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
+    stop();  // release previous file if the track has finished by itself
     FRESULT fr;
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
     if (fr != FR_OK) {
@@ -101,9 +102,9 @@ bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
         return false;
     }
     rdbuf->reqBind(&fil, startPos, eodPos);
+    bound = true;
     if (rdbuf->isError() && rdbuf->getLeft() == 0) {  // failed at the beginning
-        rdbuf->reqUnbind();
-        f_close(&fil);
+        stop();
         return false;
     }
 
@@ -127,18 +128,27 @@ void PlayAudio::pause(bool flg)
     paused = flg;
 }
 
+// not to be called from decode() (ISR) because it waits for core1
 void PlayAudio::stop()
 {
-    // stop playing at first to avoid blank noise
-    bool wasPlaying = playing;
+    // stop playing at first to avoid blank noise, decode() doesn't touch rdbuf after this
     playing = false;
     paused = false;
 
     // it takes some time to stop ReadBuffer due to secondary buffer
-    if (wasPlaying) {
+    if (bound) {
         rdbuf->reqUnbind();
         f_close(&fil);
+        bound = false;
     }
+}
+
+// called from decode() (ISR) at the end of stream instead of stop()
+// resources are released by stop() or next play() from thread context
+void PlayAudio::finish()
+{
+    playing = false;
+    paused = false;
 }
 
 bool PlayAudio::isPlaying()
