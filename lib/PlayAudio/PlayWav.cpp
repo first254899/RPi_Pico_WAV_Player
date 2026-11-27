@@ -97,8 +97,22 @@ void PlayWav::decode()
 {
     if (ap == nullptr) { return; }
 
-    if (isMuteCondition()) {
+    // rdbuf may only be used while bound (stop() clears it after the fade-out)
+    if (!bound) {
+        fader.restart();
         PlayAudio::decode();
+        return;
+    }
+    if (isrPlayGen != playGen) {  // new play(): fade in from silence
+        isrPlayGen = playGen;
+        fader.restart();
+    }
+
+    const bool active = !isMuteCondition();  // playing, not paused, no underrun
+    const uint32_t framesToEnd = static_cast<uint32_t>(rdbuf->getLeft() / blockBytes);
+    const uint32_t avail = std::min(framesToEnd, static_cast<uint32_t>(SAMPLES_PER_BUFFER));
+    if (!fader.begin(active, vol_table[volume], avail, rdbuf->isEof(), framesToEnd, rampFrames())) {
+        PlayAudio::decode();  // silent (muted, paused, stopped or at the end): consume nothing
         return;
     }
 
@@ -112,8 +126,10 @@ void PlayWav::decode()
 
     int32_t* samples = reinterpret_cast<int32_t*>(buffer->buffer->bytes);
     const uint8_t* buf = rdbuf->buf();
-    buffer->sample_count = std::min(static_cast<uint32_t>(rdbuf->getLeft()/blockBytes), buffer->max_sample_count);
-    for (int i = 0; i < buffer->sample_count; i++, buf += blockBytes) {
+    const uint32_t maxCount = std::min(avail, buffer->max_sample_count);
+    uint32_t n;  // frames consumed
+    int32_t gain;
+    for (n = 0; n < maxCount && fader.next(n, gain); n++, buf += blockBytes) {
         for (int j = 0; j < 2; j++) {
             int base = (channels == 2) ? j * bitsPerSample / 8 : 0;
             int32_t buf_s32;
@@ -124,20 +140,30 @@ void PlayWav::decode()
                 case ((FMT_FLOAT << 8) | 32): buf_s32 = wavFloatToS32((static_cast<uint32_t>(buf[base+3]) << 24) | (static_cast<uint32_t>(buf[base+2]) << 16) | (static_cast<uint32_t>(buf[base+1]) << 8) | static_cast<uint32_t>(buf[base+0])); break;
                 default: buf_s32 = 0; break;  // not reached: refused by WavParser
             }
-            samples[i*2+j] = static_cast<int32_t>((static_cast<int64_t>(buf_s32) * vol_table[volume] / 65536)) + DAC_ZERO;
+            // gain is vol_table[volume] except during a fade: unchanged result (bit-perfect at volume 100)
+            samples[n*2+j] = GainRamp::apply(buf_s32, gain) + DAC_ZERO;
             accum[j] += (buf_s32/65536) * (buf_s32/65536) / 32768 * 44100 / sampFreq;  // normalized to 44100 Hz's level
         }
         accumCount++;
     }
+    buffer->sample_count = n;
+    if (fader.padToFull()) {  // faded out within this buffer: silence for the rest
+        for (uint32_t i = n; i < buffer->max_sample_count; i++) {
+            samples[i*2+0] = DAC_ZERO;
+            samples[i*2+1] = DAC_ZERO;
+        }
+        buffer->sample_count = buffer->max_sample_count;
+    }
     give_audio_buffer(ap, buffer);
-    incSamplesPlayed(buffer->sample_count);
-    if (accumCount >= 576 * sampFreq / 44100) {  // normalized to 44100 Hz's timing
-        setLevelInt(accum[0] / buffer->sample_count, accum[1] / buffer->sample_count);
+    isrSilent = fader.silent();
+    incSamplesPlayed(n);
+    if (n > 0 && accumCount >= 576 * sampFreq / 44100) {  // normalized to 44100 Hz's timing
+        setLevelInt(accum[0] / n, accum[1] / n);
         accum[0] = 0;
         accum[1] = 0;
         accumCount = 0;
     }
-    rdbuf->shift(buffer->sample_count*blockBytes);
+    rdbuf->shift(n*blockBytes);
     if (rdbuf->isEof() && rdbuf->getLeft() < blockBytes) { finish(); }  // not stop(): this is in ISR
 
     #ifdef DEBUG_PLAYWAV

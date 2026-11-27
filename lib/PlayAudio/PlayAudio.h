@@ -9,6 +9,7 @@
 #include "hardware/sync.h"
 
 #include "ff.h"
+#include "GainRamp.h"
 #include "i2s_audio_init.h"
 
 class ReadBuffer; // to avoid inter-lock
@@ -50,10 +51,14 @@ protected:
     static uint8_t volume;
     static const int32_t vol_table[101];
     FIL fil;
-    bool bound;  // fil is open and bound to rdbuf (core0 thread context only)
+    volatile bool bound;  // fil is open and bound to rdbuf; written in thread context, decode() reads rdbuf only while set
     volatile bool playing;  // shared with decode() in I2S DMA ISR
     volatile bool paused;
     volatile bool rdbufWarning;
+    volatile uint32_t playGen;  // incremented by play(): decode() starts the new track from silence
+    volatile bool isrSilent;  // decode(): output is silent (gain 0, no fade in progress)
+    uint32_t isrPlayGen;  // decode() only
+    Fader fader;  // decode() only
     uint16_t channels;
     uint32_t sampFreq;
     uint16_t bitRateKbps;
@@ -71,6 +76,8 @@ protected:
     uint32_t getSamplesPlayed();
     void setLevelInt(uint32_t levelIntL, uint32_t levelIntR);
     void finish();
+    uint32_t rampFrames() const;
+    void waitSilent();
     virtual bool parseHeader(size_t fpos, size_t* startPos, size_t* eodPos);
     virtual void decode();
     virtual bool isMuteCondition();

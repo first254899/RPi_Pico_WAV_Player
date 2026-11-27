@@ -22,4 +22,8 @@ ctest --test-dir build-test --output-on-failure
 * `test_lcd_text`: UTF-8 file names and tags to LCD font text (`lib/LcdElementBox/lcd_text.*`): Thai with
   vowel/tone marks, CJK, emoji, combining/zero-width characters, invalid UTF-8, CP932 bytes, bounded output, fuzz.
 
+* `test_gain_ramp`: fades (`lib/PlayAudio/GainRamp.h`): ramp math (exact length/end value, monotonic, linear,
+  unity bit-exact) and a model of `PlayWav::decode()` buffer by buffer: play start, pause/unpause, stop, track end
+  (gain 0 on the last frame, no read past the end), underrun entry/recovery, volume changes, random sequences.
+
 All are built with AddressSanitizer and UndefinedBehaviorSanitizer.

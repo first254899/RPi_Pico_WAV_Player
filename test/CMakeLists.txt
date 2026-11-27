@@ -36,7 +36,14 @@ target_include_directories(test_lcd_text PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../li
 target_compile_options(test_lcd_text PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 target_link_options(test_lcd_text PRIVATE -fsanitize=address,undefined)
 
+# gain ramp (fades) of the decoder
+add_executable(test_gain_ramp test_gain_ramp.cpp)
+target_include_directories(test_gain_ramp PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../lib/PlayAudio)
+target_compile_options(test_gain_ramp PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(test_gain_ramp PRIVATE -fsanitize=address,undefined)
+
 enable_testing()
 add_test(NAME wav_parser COMMAND test_wav_parser)
 add_test(NAME read_buffer COMMAND test_read_buffer)
 add_test(NAME lcd_text COMMAND test_lcd_text)
+add_test(NAME gain_ramp COMMAND test_gain_ramp)
