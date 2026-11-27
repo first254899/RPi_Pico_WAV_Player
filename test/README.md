@@ -17,4 +17,7 @@ ctest --test-dir build-test --output-on-failure
   Short files, data ending before EOF, resume near the end, read/seek errors, random stop/restart, seek, slow card.
   A watchdog turns a hang into a failure.
 
-Both are built with AddressSanitizer and UndefinedBehaviorSanitizer.
+* `test_lcd_text`: UTF-8 file names and tags to LCD font text (`lib/LcdElementBox/lcd_text.*`): Thai with
+  vowel/tone marks, CJK, emoji, combining/zero-width characters, invalid UTF-8, CP932 bytes, bounded output, fuzz.
+
+All are built with AddressSanitizer and UndefinedBehaviorSanitizer.

@@ -76,7 +76,7 @@ void UIMode::entry(UIMode* prevMode)
 
 bool UIMode::isAudioFile(const uint16_t& idx) const
 {
-    if (file_menu_match_ext(idx, "wav", 3) ||  file_menu_match_ext(idx, "WAV", 3)) {
+    if (file_menu_match_ext(idx, "wav", 3)) {  // case-insensitive
         set_audio_codec(PlayAudio::AUDIO_CODEC_WAV);
         return true;
     }
@@ -333,7 +333,7 @@ void UIFileViewMode::listIdxItems()
 uint16_t UIFileViewMode::getNumAudioFiles() const
 {
     uint16_t num_tracks = 0;
-    num_tracks += file_menu_get_ext_num("wav", 3) + file_menu_get_ext_num("WAV", 3);
+    num_tracks += file_menu_get_ext_num("wav", 3);  // case-insensitive: counts .wav and .WAV
     return num_tracks;
 }
 
@@ -805,7 +805,7 @@ void UIPlayMode::readTag()
         }
         sprintf(str, "%d/%d", track, vars->num_tracks);
     } else {
-        uint16_t track = file_menu_get_ext_num_from_max("wav", 3, vars->idx_play + 1) + file_menu_get_ext_num_from_max("WAV", 3, vars->idx_play +1);
+        uint16_t track = file_menu_get_ext_num_from_max("wav", 3, vars->idx_play + 1);  // case-insensitive
         sprintf(str, "%d/%d", track, vars->num_tracks);
     }
     lcd->setTrack(str);
@@ -844,8 +844,7 @@ void UIPlayMode::readTag()
         uint16_t idx = 0;
         bool loaded = false;
         while (idx < file_menu_get_num()) {
-            if (file_menu_match_ext(idx, "jpg", 3) || file_menu_match_ext(idx, "JPG", 3) ||
-                file_menu_match_ext(idx, "jpeg", 4) || file_menu_match_ext(idx, "JPEG", 4)) {
+            if (file_menu_match_ext(idx, "jpg", 3) || file_menu_match_ext(idx, "jpeg", 4)) {  // case-insensitive
                 file_menu_get_fname(idx, fname, sizeof(fname_buf));
                 lcd->setImageJpeg(fname);
                 loaded = true;

@@ -1,7 +1,7 @@
 # Host-side unit tests (no Pico SDK needed)
 #   cmake -S test -B build-test && cmake --build build-test && ctest --test-dir build-test --output-on-failure
 cmake_minimum_required(VERSION 3.13)
-project(RPi_Pico_WAV_Player_test CXX)
+project(RPi_Pico_WAV_Player_test C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -27,6 +27,16 @@ target_compile_options(test_read_buffer PRIVATE -Wall -Wextra -Werror -fsanitize
 target_link_options(test_read_buffer PRIVATE -fsanitize=address,undefined)
 target_link_libraries(test_read_buffer PRIVATE Threads::Threads)
 
+# UTF-8 to LCD text (file names, tags)
+add_executable(test_lcd_text
+    test_lcd_text.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../lib/LcdElementBox/lcd_text.c
+)
+target_include_directories(test_lcd_text PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../lib/LcdElementBox)
+target_compile_options(test_lcd_text PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
+target_link_options(test_lcd_text PRIVATE -fsanitize=address,undefined)
+
 enable_testing()
 add_test(NAME wav_parser COMMAND test_wav_parser)
 add_test(NAME read_buffer COMMAND test_read_buffer)
+add_test(NAME lcd_text COMMAND test_lcd_text)

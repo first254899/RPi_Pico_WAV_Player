@@ -46,13 +46,15 @@ static void idx_entry_swap(uint32_t entry_number1, uint32_t entry_number2)
     entry_list[entry_number2] = tmp_entry;
 }
 
-static int32_t my_strcmp(char* str1 , char* str2)
+// Byte compare as unsigned char: for UTF-8 names this is code point order (with plain char,
+// bytes >= 0x80 would sort before ASCII)
+static int32_t my_strcmp(const char* str1 , const char* str2)
 {
     int32_t result = 0;
 
     // Compare until strings do not match
     while (result == 0) {
-        result = *str1 - *str2;
+        result = (int32_t) (unsigned char) *str1 - (int32_t) (unsigned char) *str2;
         if (*str1 == '\0' || *str2 == '\0') break;  //Comparing also ends when reading to the end of the string
         str1++;
         str2++;
@@ -60,14 +62,14 @@ static int32_t my_strcmp(char* str1 , char* str2)
     return result;
 }
 
-static int32_t my_strncmp(char* str1 , char* str2, int size)
+static int32_t my_strncmp(const char* str1 , const char* str2, int size)
 {
     int32_t result = 0;
     int32_t len = 0;
 
     // Compare until strings do not match
     while (result == 0) {
-        result = *str1 - *str2;
+        result = (int32_t) (unsigned char) *str1 - (int32_t) (unsigned char) *str2;
         len++;
         if (*str1 == '\0' || *str2 == '\0' || len >= size) break;   //Comparing also ends when reading to the end of the string
         str1++;
@@ -516,7 +518,17 @@ int file_menu_match_ext(uint16_t order, const char* ext, size_t ext_size)
     const char* name = file_menu_get_fname_ptr(order);  // no copy: UTF-8 names can be up to FF_LFN_BUF bytes
     const char* ext_pos = strrchr(name, '.');
     if (ext_pos) {
-        if (strncmp(ext_pos+1, ext, ext_size) == 0) { return 1; }
+        // whole extension, ASCII case-insensitive ("wav" matches .wav/.WAV/.Wav, not .wave)
+        ext_pos++;
+        if (strlen(ext_pos) != ext_size) { return 0; }
+        for (size_t i = 0; i < ext_size; i++) {
+            char a = ext_pos[i];
+            char b = ext[i];
+            if (a >= 'A' && a <= 'Z') { a += 'a' - 'A'; }
+            if (b >= 'A' && b <= 'Z') { b += 'a' - 'A'; }
+            if (a != b) { return 0; }
+        }
+        return 1;
     }
     return 0;
 }

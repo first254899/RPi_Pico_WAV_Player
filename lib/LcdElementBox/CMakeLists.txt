@@ -3,6 +3,7 @@ if (NOT TARGET LcdElementBox)
 
     target_sources(LcdElementBox INTERFACE
         ${CMAKE_CURRENT_LIST_DIR}/LcdElementBox.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/lcd_text.c
     )
 
     target_link_libraries(LcdElementBox INTERFACE

@@ -8,6 +8,8 @@
 
 #include "LcdElementBox.h"
 
+#include "lcd_text.h"
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -237,8 +239,11 @@ void TextBox::clear()
 
 void TextBox::setText(const char* str)
 {
-    if (strncmp(this->str, str, charSize) == 0) { return; }
-    memcpy(this->str, str, charSize);
+    // UTF-8 -> characters the font has (one placeholder per other character); bounded and always terminated
+    char str_temp[charSize];
+    lcd_text_from_utf8(str_temp, sizeof(str_temp), str);
+    if (strncmp(this->str, str_temp, charSize) == 0) { return; }
+    memcpy(this->str, str_temp, charSize);
     update();
 }
 
@@ -247,7 +252,7 @@ void TextBox::setFormatText(const char* fmt, ...)
     char str_temp[charSize];
     va_list va;
     va_start(va, fmt);
-    vsprintf(str_temp, fmt, va);
+    vsnprintf(str_temp, sizeof(str_temp), fmt, va);
     va_end(va);
     setText(str_temp);
 }
@@ -368,9 +373,12 @@ void ScrollTextBox::setScroll(bool scr_en)
 
 void ScrollTextBox::setText(const char* str)
 {
-    if (strncmp(this->str, str, charSize) == 0) { return; }
+    // UTF-8 -> characters the font has (one placeholder per other character); bounded and always terminated
+    char str_temp[charSize];
+    lcd_text_from_utf8(str_temp, sizeof(str_temp), str);
+    if (strncmp(this->str, str_temp, charSize) == 0) { return; }
     update();
-    memcpy(this->str, str, charSize);
+    memcpy(this->str, str_temp, charSize);
 }
 
 //=================================
