@@ -11,6 +11,7 @@
 #include "pico/stdlib.h"
 
 #include "audio_codec.h"
+#include "fatfs_owner.h"
 #include "ReadBuffer.h"
 
 //#define DEBUG_PLAYAUDIO
@@ -18,6 +19,7 @@
 spin_lock_t* PlayAudio::spin_lock = nullptr;
 audio_buffer_pool_t* PlayAudio::ap = nullptr;
 uint8_t PlayAudio::volume = 65;
+volatile uint32_t PlayAudio::rdbufUnderrunCount = 0;
 
 const int32_t PlayAudio::vol_table[101] = {
     0, 4, 8, 12, 16, 20, 24, 27, 29, 31,
@@ -66,6 +68,11 @@ uint8_t PlayAudio::getVolume()
     return volume;
 }
 
+uint32_t PlayAudio::getRdbufUnderrunCount()
+{
+    return rdbufUnderrunCount;
+}
+
 PlayAudio::PlayAudio() : bound(false), playing(false), paused(false), rdbufWarning(false),
     playGen(0), isrSilent(true), isrPlayGen(0),
     channels(2), sampFreq(0), bitRateKbps(44100*16*2/1000), bitsPerSample(16),
@@ -91,6 +98,7 @@ bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     stop();  // release previous file if the track has finished by itself
     FRESULT fr;
+    FATFS_ASSERT_OWNER();  // core0 owns FatFs until reqBind() (see fatfs_owner.h)
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
     if (fr != FR_OK) {
         printf("ERROR: f_open %s failed (fr = %d)\r\n", filename, static_cast<int>(fr));
@@ -144,7 +152,8 @@ void PlayAudio::stop()
         // and it doesn't touch rdbuf any more once bound is false
         bound = false;
         // it takes some time to stop ReadBuffer due to secondary buffer
-        rdbuf->reqUnbind();
+        rdbuf->reqUnbind();  // core1 hands FatFs back to core0 at the latest here
+        FATFS_ASSERT_OWNER();
         f_close(&fil);
     }
 }
@@ -292,8 +301,9 @@ bool PlayAudio::isMuteCondition()
 {
     if (!playing || paused) { return true; }
     if (!rdbufWarning && rdbuf->isNearEmpty()) {
-        rdbufWarning = true;
-        printf("AUDIO::rdbuf near empty. insert instant mute\r\n");
+        rdbufWarning = true;  // insert instant mute
+        // no printf here: decode() runs in the I2S DMA IRQ. The main loop logs the count
+        rdbufUnderrunCount = rdbufUnderrunCount + 1;
     } else if (rdbufWarning && rdbuf->isFilled()) {  // not isFull(): queue never gets full again near the end
         rdbufWarning = false;
     }

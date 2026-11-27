@@ -18,6 +18,10 @@ ctest --test-dir build-test --output-on-failure
   Core1 must sleep (`__wfe`) while idle: the stub's `__sev`/`__wfe` emulate the event register without timeout,
   so a lost wakeup hangs, and idle CPU time is measured.
   A watchdog turns a hang into a failure.
+  FatFs ownership (`lib/fatfs_owner`): `FATFS_ASSERT_OWNER()` is on and a violation aborts
+  (`test/fatfs_owner_stub.c`, `get_core_num()` is 1 on the core1 thread); the test checks that core1 holds FatFs
+  while it streams, gives it back before core0 sees the end of data and on unbind.
+  Zero insertion on underrun is counted (`getZeroFillCount()`) instead of printed from the ISR.
 
 * `test_lcd_text`: UTF-8 file names and tags to LCD font text (`lib/LcdElementBox/lcd_text.*`): Thai with
   vowel/tone marks, CJK, emoji, combining/zero-width characters, invalid UTF-8, CP932 bytes, bounded output, fuzz.
@@ -33,5 +37,7 @@ ctest --test-dir build-test --output-on-failure
 * `test_file_menu`: `lib/file_menu/file_menu_FatFs.c` (built as C, unmodified) against an in-memory directory tree
   (`test/stubs_c`): UTF-8 names and their order, bounded name copies, extension match, `f_opendir` failure in
   `file_menu_ch_dir()`, `f_readdir` errors (counting and lookup), out of memory in each allocation, leaks.
+
+`test_tag_read` and `test_file_menu` also run with the FatFs owner check on (single thread: core0).
 
 All are built with AddressSanitizer and UndefinedBehaviorSanitizer.

@@ -16,6 +16,7 @@ void audio_codec_set_dac_enable_func(void (*func)(bool flag));
 void audio_codec_dac_enable(bool flag);
 PlayAudio* get_audio_codec();
 PlayAudio* set_audio_codec(PlayAudio::audio_codec_t audio_codec);
+void audio_codec_log_events();  // thread context: print what decode() (ISR) counted since the last call
 extern "C" {
 void i2s_callback_func();
 }

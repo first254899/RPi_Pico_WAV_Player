@@ -12,6 +12,7 @@
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 
+#include "audio_codec.h"
 #include "common.h"
 #include "ff.h"
 #include "lcd.h"
@@ -90,6 +91,7 @@ int main() {
     const int LoopCycleMs = UIMode::UpdateCycleMs; // loop cycle (50 ms)
     while (true) {
         uint32_t time = _millis();
+        audio_codec_log_events();  // print what the audio ISR counted (it doesn't print by itself)
         ui_update();
         time = _millis() - time;
         if (time < LoopCycleMs) {

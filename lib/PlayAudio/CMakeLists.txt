@@ -16,6 +16,7 @@ if (NOT TARGET PlayAudio)
         pico_stdlib
         pico_multicore
         pico_fatfs
+        fatfs_owner
         pico_audio_32b
         pico_audio_i2s_32b
     )

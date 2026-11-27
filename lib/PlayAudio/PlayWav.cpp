@@ -12,6 +12,7 @@
 
 #include "pico/stdlib.h"
 
+#include "fatfs_owner.h"
 #include "ReadBuffer.h"
 
 //#define DEBUG_PLAYWAV
@@ -51,6 +52,7 @@ public:
     uint64_t size() { return static_cast<uint64_t>(f_size(fp)); }
     bool readAt(uint64_t pos, void* buf, size_t len)
     {
+        FATFS_ASSERT_OWNER();
         if (f_lseek(fp, static_cast<FSIZE_t>(pos)) != FR_OK) { return false; }
         UINT br;
         if (f_read(fp, buf, static_cast<UINT>(len), &br) != FR_OK) { return false; }

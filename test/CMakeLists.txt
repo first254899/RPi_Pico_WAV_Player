@@ -13,6 +13,9 @@ target_include_directories(test_wav_parser PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../
 target_compile_options(test_wav_parser PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 target_link_options(test_wav_parser PRIVATE -fsanitize=address,undefined)
 
+# FatFs ownership (lib/fatfs_owner): FATFS_ASSERT_OWNER() is on (no NDEBUG) and a violation aborts
+# (test/fatfs_owner_stub.c); get_core_num() is 1 on the core1 thread (test/stubs/pico.h)
+
 # ReadBuffer core0/core1 protocol: copy the sources next to nothing else so that
 # their quoted includes ("PlayAudio.h", "ff.h", pico/...) resolve to test/stubs
 find_package(Threads REQUIRED)
@@ -21,8 +24,9 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/../lib/PlayAudio/ReadBuffer.cpp ${CMAKE
 add_executable(test_read_buffer
     test_read_buffer.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/rb/ReadBuffer.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/fatfs_owner_stub.c
 )
-target_include_directories(test_read_buffer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/rb ${CMAKE_CURRENT_LIST_DIR}/stubs)
+target_include_directories(test_read_buffer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/rb ${CMAKE_CURRENT_LIST_DIR}/stubs ${CMAKE_CURRENT_LIST_DIR}/../lib/fatfs_owner)
 target_compile_options(test_read_buffer PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 target_link_options(test_read_buffer PRIVATE -fsanitize=address,undefined)
 target_link_libraries(test_read_buffer PRIVATE Threads::Threads)
@@ -47,8 +51,9 @@ add_executable(test_tag_read
     test_tag_read.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/TagRead.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/utf_conv.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/fatfs_owner_stub.c
 )
-target_include_directories(test_tag_read PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs ${CMAKE_CURRENT_LIST_DIR}/../src)
+target_include_directories(test_tag_read PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs ${CMAKE_CURRENT_LIST_DIR}/../src ${CMAKE_CURRENT_LIST_DIR}/../lib/fatfs_owner)
 target_compile_options(test_tag_read PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
 set_source_files_properties(test_tag_read.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
 target_link_options(test_tag_read PRIVATE -fsanitize=address,undefined)
@@ -58,8 +63,9 @@ target_link_options(test_tag_read PRIVATE -fsanitize=address,undefined)
 add_executable(test_file_menu
     test_file_menu.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu/file_menu_FatFs.c
+    ${CMAKE_CURRENT_LIST_DIR}/fatfs_owner_stub.c
 )
-target_include_directories(test_file_menu PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs_c ${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu)
+target_include_directories(test_file_menu PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stubs_c ${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu ${CMAKE_CURRENT_LIST_DIR}/../lib/fatfs_owner)
 target_compile_options(test_file_menu PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all)
 set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/../lib/file_menu/file_menu_FatFs.c PROPERTIES
     COMPILE_DEFINITIONS "malloc=test_malloc;calloc=test_calloc"

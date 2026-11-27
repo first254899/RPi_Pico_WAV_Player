@@ -8,6 +8,7 @@
 
 #include <cstring>
 
+#include "fatfs_owner.h"
 #include "JPEGDecoder.h"
 
 //#define DEBUG_IMAGE_FITTER
@@ -302,6 +303,7 @@ bool ImageFitter::loadJpegFile(const char *filename, const uint64_t pos, const s
 {
     int decoded;
     bool reduce = false;
+    FATFS_ASSERT_OWNER();  // core0, never while a track is streaming (see fatfs_owner.h)
     decoded = JpegDec.decodeSdFile(filename, pos, size, 0); // reduce == 0
     if (decoded <= 0) { return false; }
     src_w = JpegDec.width;

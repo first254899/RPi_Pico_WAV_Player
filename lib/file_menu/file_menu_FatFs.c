@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "fatfs_owner.h"
 #include "tf_card.h"
 
 //#define DEBUG_FILE_MENU
@@ -82,6 +83,7 @@ static FRESULT idx_f_stat(uint16_t idx, FILINFO* fno)
 {
     FRESULT res = FR_OK;
     int error_count = 0;
+    FATFS_ASSERT_OWNER();  // core0, never while a track is streaming (see fatfs_owner.h)
     if (idx == 0) {
         strncpy(fno->fname, "..", FF_LFN_BUF);
         fno->fattrib = AM_DIR;
@@ -288,6 +290,7 @@ static void idx_qsort_entry_list_by_range(uint16_t r_start, uint16_t r_end_1, ui
 static uint16_t idx_get_size(int target)
 {
     uint16_t cnt = 1;  // ".."
+    FATFS_ASSERT_OWNER();
     // Rewind directory index
     if (f_readdir(&dir, 0) != FR_OK) { return cnt; }  // e.g. directory could not be opened: ".." only
     // Directory search completed with null character
@@ -383,6 +386,7 @@ FRESULT file_menu_init(uint8_t* fs_type)
         true  // use internal pullup
     };
 
+    FATFS_ASSERT_OWNER();
     pico_fatfs_set_config(&config);
     for (int i = 0; i < 5; i++) {
         fr = f_mount(&fs, "", 1); // fr: 0: mount successful, 1: mount failed
@@ -397,6 +401,7 @@ FRESULT file_menu_init(uint8_t* fs_type)
 
 FRESULT file_menu_deinit()
 {
+    FATFS_ASSERT_OWNER();
     FRESULT fr = f_unmount("");
     pico_fatfs_reboot_spi();
     return fr;
@@ -581,6 +586,7 @@ FRESULT file_menu_open_dir(const TCHAR* path)
 {
     FRESULT fr = FR_INVALID_PARAMETER;     /* FatFs return code */
     //fr = f_opendir(&dir, path);
+    FATFS_ASSERT_OWNER();
     idx_sort_delete();
     f_closedir(&dir);  // harmless if not open
     f_chdir(path);
@@ -617,6 +623,7 @@ void file_menu_close_dir(void)
         printf("fast_fname_list[%d] = %4s\r\n", i, temp_str);
     }
     */
+    FATFS_ASSERT_OWNER();
     idx_sort_delete();
     f_closedir(&dir);
 }

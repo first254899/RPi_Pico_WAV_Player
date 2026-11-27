@@ -14,7 +14,10 @@
 #include "pico/flash.h"
 #include "pico/multicore.h"
 
+#include "fatfs_owner.h"
+
 ReadBuffer* ReadBuffer::_inst = nullptr;
+volatile uint32_t ReadBuffer::_zeroFillCount = 0;
 
 void readBufferCore1Process()
 {
@@ -69,7 +72,8 @@ bool ReadBuffer::fill()
         size_t space = _size - _left;
         memset(_head + _left, 0, space);
         _left += space;
-        printf("ERROR: ReadBuffer::secondaryBuffer is empty\r\n");
+        // no printf here: fill() is called from decode() in the I2S DMA IRQ. The main loop logs the count
+        _zeroFillCount = _zeroFillCount + 1;
         return false;
     }
     secondaryBufferItem_t item;
@@ -139,6 +143,11 @@ bool ReadBuffer::isError()
     return _isError;
 }
 
+uint32_t ReadBuffer::getZeroFillCount()
+{
+    return _zeroFillCount;
+}
+
 // enough data is buffered: queue is full or all data till the end has been read
 bool ReadBuffer::isFilled()
 {
@@ -161,6 +170,9 @@ void ReadBuffer::reqBind(FIL* fp, size_t startPos, size_t eodPos)
     _isEof = false;
     _isError = false;
     bindReq_t req = {fp, startPos, eodPos, true};
+    // hand FatFs over to core1 (core1 hands it back at the end of data or on unbind)
+    FATFS_ASSERT_OWNER();
+    fatfs_owner_set(1);
     // send request
     queue_add_blocking(&bindReqQueue, &req);
     // wait response, which core1 sends when initial fill is done
@@ -190,6 +202,7 @@ void ReadBuffer::fillLoop()
         if (req.flag) {
             stream(req);  // returns with next request in req
         } else {
+            fatfs_owner_set(0);  // core1 doesn't touch the file any more: hand FatFs back before the response
             queue_add_blocking(&bindRespQueue, &req);  // response to unbind
             queue_remove_blocking(&bindReqQueue, &req);
         }
@@ -210,11 +223,13 @@ void ReadBuffer::stream(bindReq_t& req)
     secondaryBufferItem_t item;
 
     _isEod = false;
+    if (pos < eodPos) { FATFS_ASSERT_OWNER(); }
     bool seekError = (pos < eodPos && f_lseek(fp, pos) != FR_OK);
     if (pos >= eodPos || seekError) {
         // nothing to read: zero-length EOF item
         if (seekError) { printf("ERROR: ReadBuffer f_lseek failed\r\n"); }
         done = true;
+        fatfs_owner_set(0);  // no more FatFs calls in this stream (before core0 can see the EOF item)
         item = {&secondaryBuffer[0], pos, 0, true, seekError};
         queue_try_add(&secondaryBufferQueue, &item);
         _isEod = true;
@@ -238,6 +253,7 @@ void ReadBuffer::stream(bindReq_t& req)
                 done = true;
             }
             UINT br;
+            FATFS_ASSERT_OWNER();
             FRESULT fr = f_read(fp, &secondaryBuffer[SECONDARY_BUFFER_SIZE * id], static_cast<UINT>(reqBr), &br);
             // br < reqBr: file is shorter than expected. data read before an error is still valid
             bool error = (fr != FR_OK || br < reqBr);
@@ -246,6 +262,8 @@ void ReadBuffer::stream(bindReq_t& req)
                 done = true;
             }
             pos += br;
+            // last read of this stream: hand FatFs back to core0 before core0 can see the EOF item
+            if (done) { fatfs_owner_set(0); }
             // put on queue divided by SECONDARY_BUFFER_SIZE (at least one item to carry EOF)
             int readN = (br + SECONDARY_BUFFER_SIZE - 1) / SECONDARY_BUFFER_SIZE;
             if (readN == 0) { readN = 1; }

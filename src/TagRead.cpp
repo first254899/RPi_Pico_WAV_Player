@@ -14,6 +14,7 @@
 #include <cstring>
 #include <tuple>
 
+#include "fatfs_owner.h"
 #include "utf_conv.h"
 
 TagRead::TagRead()
@@ -80,6 +81,7 @@ int TagRead::loadFile(const char* filename)
     clearMP4_ilst();
 
     FRESULT fr;
+    FATFS_ASSERT_OWNER();  // core0, never while a track is streaming (see fatfs_owner.h)
 	fr = f_open(&fil, (TCHAR*) filename, FA_READ);
     if (fr != FR_OK) {
         return 1;

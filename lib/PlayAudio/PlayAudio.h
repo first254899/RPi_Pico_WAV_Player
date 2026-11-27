@@ -32,6 +32,7 @@ public:
     static void volumeDown();
     static void setVolume(uint8_t value);
     static uint8_t getVolume();
+    static uint32_t getRdbufUnderrunCount();  // times decode() muted because rdbuf was near empty
     PlayAudio();
     virtual ~PlayAudio();
     virtual bool play(const char* filename, size_t fpos = 0, uint32_t samplesPlayed = 0);  // false: not playable (UI skips it)
@@ -50,6 +51,7 @@ protected:
     static audio_buffer_pool_t* ap;
     static uint8_t volume;
     static const int32_t vol_table[101];
+    static volatile uint32_t rdbufUnderrunCount;  // incremented by isMuteCondition() in decode() (ISR)
     FIL fil;
     volatile bool bound;  // fil is open and bound to rdbuf; written in thread context, decode() reads rdbuf only while set
     volatile bool playing;  // shared with decode() in I2S DMA ISR

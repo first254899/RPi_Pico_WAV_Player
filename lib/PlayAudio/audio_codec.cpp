@@ -12,6 +12,7 @@
 
 #include "PlayNone.h"
 #include "PlayWav.h"
+#include "ReadBuffer.h"
 
 static PlayAudio* playAudio_ary[2] = {};
 static void (*decode_func_ary[2])() = {};
@@ -56,6 +57,34 @@ PlayAudio* set_audio_codec(PlayAudio::audio_codec_t audio_codec)
 {
     cur_audio_codec = audio_codec;
     return get_audio_codec();
+}
+
+// The I2S DMA IRQ path (decode(), ReadBuffer::fill(), the I2S library) doesn't print, because printf
+// in an interrupt handler can block on the stdio mutex or take too long. It only counts events,
+// and this function prints the changes. Call it periodically from the main loop.
+void audio_codec_log_events()
+{
+    static uint32_t lastUnderrun = 0;
+    static uint32_t lastZeroFill = 0;
+    static uint32_t lastI2sDropped = 0;
+    uint32_t underrun = PlayAudio::getRdbufUnderrunCount();
+    uint32_t zeroFill = ReadBuffer::getZeroFillCount();
+    uint32_t i2sDropped = i2s_lib_msgs_dropped();
+    if (underrun != lastUnderrun) {
+        printf("AUDIO::rdbuf near empty. inserted instant mute (%lu times, total %lu)\r\n",
+            static_cast<unsigned long>(underrun - lastUnderrun), static_cast<unsigned long>(underrun));
+        lastUnderrun = underrun;
+    }
+    if (zeroFill != lastZeroFill) {
+        printf("ERROR: ReadBuffer::secondaryBuffer was empty, inserted zeros (%lu times, total %lu)\r\n",
+            static_cast<unsigned long>(zeroFill - lastZeroFill), static_cast<unsigned long>(zeroFill));
+        lastZeroFill = zeroFill;
+    }
+    if (i2sDropped != lastI2sDropped) {
+        printf("I2S library messages suppressed in the interrupt handler (%lu times, total %lu)\r\n",
+            static_cast<unsigned long>(i2sDropped - lastI2sDropped), static_cast<unsigned long>(i2sDropped));
+        lastI2sDropped = i2sDropped;
+    }
 }
 
 // callback from:

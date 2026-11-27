@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
+add_subdirectory(lib/fatfs_owner)
 add_subdirectory(lib/file_menu)
 add_subdirectory(lib/LcdElementBox)
 add_subdirectory(lib/pico_audio_i2s_32b)
@@ -44,6 +45,7 @@ target_link_libraries(${bin_name}
         hardware_sleep
         hardware_uart
         pico_stdlib
+        fatfs_owner
         file_menu
         LcdElementBox
         pico_audio_32b
