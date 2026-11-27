@@ -15,6 +15,8 @@ ctest --test-dir build-test --output-on-failure
 * `test_read_buffer`: core0/core1 streaming protocol of `lib/PlayAudio/ReadBuffer.*`, built unmodified against
   `test/stubs` (pico queue, multicore as `std::thread`, FatFs subset with fault injection).
   Short files, data ending before EOF, resume near the end, read/seek errors, random stop/restart, seek, slow card.
+  Core1 must sleep (`__wfe`) while idle: the stub's `__sev`/`__wfe` emulate the event register without timeout,
+  so a lost wakeup hangs, and idle CPU time is measured.
   A watchdog turns a hang into a failure.
 
 * `test_lcd_text`: UTF-8 file names and tags to LCD font text (`lib/LcdElementBox/lcd_text.*`): Thai with

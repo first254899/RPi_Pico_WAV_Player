@@ -1,10 +1,13 @@
 // Host stub of pico_util queue with the same semantics (fixed element size, bounded, copy in/out)
+// like the SDK, a successful add/remove/peek ends with __sev() (wakes a __wfe() on the other core)
 #pragma once
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <vector>
+
+#include "hardware/sync.h"
 
 typedef struct {
     std::mutex m;
@@ -36,6 +39,8 @@ static inline bool queue_add_internal(queue_t* q, const void* e, bool block)
     memcpy(&q->data[((q->head + q->count) % q->capacity) * q->elementSize], e, q->elementSize);
     q->count++;
     q->cv.notify_all();
+    lk.unlock();
+    __sev();
     return true;
 }
 static inline bool queue_remove_internal(queue_t* q, void* e, bool block, bool remove)
@@ -51,6 +56,8 @@ static inline bool queue_remove_internal(queue_t* q, void* e, bool block, bool r
         q->count--;
         q->cv.notify_all();
     }
+    lk.unlock();
+    __sev();
     return true;
 }
 static inline bool queue_try_add(queue_t* q, const void* e) { return queue_add_internal(q, e, false); }

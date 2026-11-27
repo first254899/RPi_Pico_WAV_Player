@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "hardware/sync.h"
 #include "pico/flash.h"
 #include "pico/multicore.h"
 
@@ -267,6 +268,14 @@ void ReadBuffer::stream(bindReq_t& req)
         if (!ready && (done || queue_is_full(&secondaryBufferQueue))) {
             queue_add_blocking(&bindRespQueue, &req);
             ready = true;
+        }
+
+        // nothing to do until core0 takes an item from secondaryBufferQueue (fill()) or sends the next request.
+        // Both are queue operations, which end with __sev() on core0, so sleep instead of spinning.
+        // No lost wakeup: an event sent after the checks below and before __wfe() is latched and __wfe() returns at once.
+        // Spurious wakeups only cost one more pass of the loop.
+        if (ready && (done || queue_is_full(&secondaryBufferQueue)) && queue_is_empty(&bindReqQueue)) {
+            __wfe();
         }
     }
 }
