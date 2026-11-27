@@ -8,6 +8,7 @@ if (NOT TARGET PlayAudio)
         ${CMAKE_CURRENT_LIST_DIR}/PlayAudio.cpp
         ${CMAKE_CURRENT_LIST_DIR}/PlayNone.cpp
         ${CMAKE_CURRENT_LIST_DIR}/PlayWav.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WavParser.cpp
     )
 
     target_link_libraries(PlayAudio INTERFACE
