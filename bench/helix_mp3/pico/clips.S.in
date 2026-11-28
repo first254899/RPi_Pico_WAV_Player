@@ -1,0 +1,11 @@
+/* benchmark clips, kept in flash (.flashdata stays in flash also in copy_to_ram builds) */
+    .section .flashdata.clips, "a"
+    .balign 4
+    .global clip_128k, clip_128k_end, clip_320k, clip_320k_end
+clip_128k:
+    .incbin "@CLIP_DIR@/clip_128k.mp3"
+clip_128k_end:
+    .balign 4
+clip_320k:
+    .incbin "@CLIP_DIR@/clip_320k.mp3"
+clip_320k_end:
