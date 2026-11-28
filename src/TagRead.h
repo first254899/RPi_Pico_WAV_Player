@@ -173,6 +173,7 @@ private:
     int GetID3IDCount(const char* id3v22, const char* id3v23);
     void ID32Print(id32* id32header);
     void ID32Free(id32* id32header);
+    id32* ID32Fail(id32* id32header, void* frame, char* frameData);  // frees a partly parsed tag, returns NULL
     int getID32Picture(int idx, mime_t& mime, ptype_t& ptype, size_t& pos, size_t& size, bool& isUnsynced);
 
     int ID31Detect(char* header, id31** id31header);

@@ -14,9 +14,11 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <random>
 #include <vector>
 
+#include "fatfs_owner.h"
 #include "ReadBuffer.h"
 
 static int g_failed = 0;
@@ -104,7 +106,12 @@ static void playRange(ReadBuffer* rb, const std::vector<uint8_t>& file, size_t s
     fil.file = &file;
     fil.readDelayUs = delayUs;
     rb->reqBind(&fil, start, eod);
+    // FatFs ownership: core1 keeps it while more than the initial fill (the lookahead) is left to read
+    if (start < eod && eod - start > 3456 * 8) { CHECK(fatfs_owner_core == 1); }
     Played p = consume(rb, chunk);
+    // core1 handed FatFs back before core0 saw the end of data: core0 may e.g. look for the next track now
+    CHECK(fatfs_owner_core == 0);
+    FATFS_ASSERT_OWNER();
     size_t expectEnd = std::max(start, eod);
     CHECK(p.eof);
     CHECK(!p.error);
@@ -112,6 +119,7 @@ static void playRange(ReadBuffer* rb, const std::vector<uint8_t>& file, size_t s
     CHECK(fil.maxReadEnd.load() <= eod);  // C1: never read at or beyond eodPos
     CHECK(p.tellAtEnd == expectEnd);
     rb->reqUnbind();
+    CHECK(fatfs_owner_core == 0);
 }
 
 int main()
@@ -184,6 +192,7 @@ int main()
             CHECK(rb->isError());
             CHECK(rb->isEof());
             CHECK(rb->getLeft() == 0);
+            CHECK(fatfs_owner_core == 0);
             rb->reqUnbind();
             playRange(rb, f, 44, 300000, 2304, 0, "after seek error");
         }
@@ -224,6 +233,8 @@ int main()
             CHECK(p.data.size() == expectEnd - start || (p.eof && p.data.size() == eod - start));
             CHECK(fil.maxReadEnd.load() <= eod);
             rb->reqUnbind();
+            CHECK(fatfs_owner_core == 0);  // unbind hands FatFs back even in the middle of the stream
+            FATFS_ASSERT_OWNER();
         }
         section("200 random stop/restart cycles without stale data");
     }
@@ -250,6 +261,50 @@ int main()
         auto f = makeFile(300000, 8);
         playRange(rb, f, 44, 300000, 4608, 400, "slow card");
         section("slow card: mute released near the end, content intact");
+    }
+
+    // core1 sleeps (__wfe) instead of spinning while there is nothing to do, and wakes up on core0's queue operations
+    {
+        auto f = makeFile(1000000, 9);
+        auto idleCpuMs = [](const char* stage) {
+            g_stage = stage;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));  // let core1 settle
+            std::clock_t c0 = std::clock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            return (std::clock() - c0) * 1000.0 / CLOCKS_PER_SEC;
+        };
+        FIL fil; fil.file = &f;
+        rb->reqBind(&fil, 44, 1000000);  // queue full, nothing consumed
+        double busyFull = idleCpuMs("idle: queue full");
+        CHECK(busyFull < 100.0);  // a spinning core1 burns ~300 ms of CPU here
+        Played p = consume(rb, 4608, 50000);  // consumer wakes core1 to refill
+        CHECK(sameAs(p.data, f, 44, 50044));
+        CHECK(rb->isFull() || rb->getLeft() > 0);
+        rb->reqUnbind();
+        FIL fil2; fil2.file = &f;
+        rb->reqBind(&fil2, 44, 5000);  // all data read (done), nothing consumed
+        double busyDone = idleCpuMs("idle: end of data");
+        CHECK(busyDone < 100.0);
+        rb->reqUnbind();  // request wakes core1
+        double busyUnbound = idleCpuMs("idle: unbound");
+        CHECK(busyUnbound < 100.0);
+        printf("       idle CPU over 300 ms: full %.1f ms, end of data %.1f ms, unbound %.1f ms\n", busyFull, busyDone, busyUnbound);
+        playRange(rb, f, 44, 1000000, 2304, 0, "after idle");
+        section("core1 sleeps while idle and wakes on queue operations");
+    }
+
+    // zero insertion is counted (fill() runs in the ISR and must not print): consume faster than a slow card
+    {
+        auto f = makeFile(400000, 10);
+        g_stage = "zero fill count";
+        FIL fil; fil.file = &f; fil.readDelayUs = 2000;
+        uint32_t before = ReadBuffer::getZeroFillCount();
+        rb->reqBind(&fil, 44, 400000);
+        for (int i = 0; i < 40 && !rb->isEof(); i++) { rb->shift(rb->getLeft()); }  // no instant mute
+        CHECK(ReadBuffer::getZeroFillCount() > before);
+        rb->reqUnbind();
+        CHECK(fatfs_owner_core == 0);
+        section("underrun with zero insertion is counted for the main loop log");
     }
 
     printf("%d checks, %d failed\n", g_checks, g_failed);

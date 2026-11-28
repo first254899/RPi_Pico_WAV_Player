@@ -167,6 +167,9 @@ public:
 protected:
     size_t tagImageSize = 0;
     bool loadImageFromDir = true;
+    // UTF-8 file names (up to FF_LFN_BUF bytes): kept off the core0 stack
+    char play_fname_buf[FF_LFN_BUF + 1];
+    char fname_buf[FF_LFN_BUF + 1];
     void play();
     //audio_codec_enm_t getAudioCodec(MutexFsBaseFile* f);
     void readTag();

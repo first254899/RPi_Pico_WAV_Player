@@ -14,3 +14,4 @@ static constexpr int32_t DAC_ZERO = 1; // to avoid pop noise caused by auto-mute
 void i2s_setup(uint32_t samp_freq, audio_buffer_pool_t*& ap);
 void i2s_audio_init(uint32_t sample_freq);
 void i2s_audio_deinit();
+uint32_t i2s_lib_msgs_dropped();  // messages of pico_audio_i2s_32b dropped because they were printed in an IRQ

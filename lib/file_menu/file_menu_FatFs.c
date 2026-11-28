@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "fatfs_owner.h"
 #include "tf_card.h"
 
 //#define DEBUG_FILE_MENU
@@ -46,13 +47,15 @@ static void idx_entry_swap(uint32_t entry_number1, uint32_t entry_number2)
     entry_list[entry_number2] = tmp_entry;
 }
 
-static int32_t my_strcmp(char* str1 , char* str2)
+// Byte compare as unsigned char: for UTF-8 names this is code point order (with plain char,
+// bytes >= 0x80 would sort before ASCII)
+static int32_t my_strcmp(const char* str1 , const char* str2)
 {
     int32_t result = 0;
 
     // Compare until strings do not match
     while (result == 0) {
-        result = *str1 - *str2;
+        result = (int32_t) (unsigned char) *str1 - (int32_t) (unsigned char) *str2;
         if (*str1 == '\0' || *str2 == '\0') break;  //Comparing also ends when reading to the end of the string
         str1++;
         str2++;
@@ -60,14 +63,14 @@ static int32_t my_strcmp(char* str1 , char* str2)
     return result;
 }
 
-static int32_t my_strncmp(char* str1 , char* str2, int size)
+static int32_t my_strncmp(const char* str1 , const char* str2, int size)
 {
     int32_t result = 0;
     int32_t len = 0;
 
     // Compare until strings do not match
     while (result == 0) {
-        result = *str1 - *str2;
+        result = (int32_t) (unsigned char) *str1 - (int32_t) (unsigned char) *str2;
         len++;
         if (*str1 == '\0' || *str2 == '\0' || len >= size) break;   //Comparing also ends when reading to the end of the string
         str1++;
@@ -80,6 +83,7 @@ static FRESULT idx_f_stat(uint16_t idx, FILINFO* fno)
 {
     FRESULT res = FR_OK;
     int error_count = 0;
+    FATFS_ASSERT_OWNER();  // core0, never while a track is streaming (see fatfs_owner.h)
     if (idx == 0) {
         strncpy(fno->fname, "..", FF_LFN_BUF);
         fno->fattrib = AM_DIR;
@@ -87,11 +91,17 @@ static FRESULT idx_f_stat(uint16_t idx, FILINFO* fno)
     }
     if (f_stat_cnt == 1 || f_stat_cnt > idx) {
         // Rewind directory index
-        f_readdir(&dir, 0);
+        res = f_readdir(&dir, 0);
         f_stat_cnt = 1;
+        if (res != FR_OK) { fno->fname[0] = '\0'; return res; }
     }
     for (;;) {
-        f_readdir(&dir, fno);
+        FRESULT fr = f_readdir(&dir, fno);
+        if (fr != FR_OK) {  // fno is not valid: don't return a stale name (and don't spin on it)
+            fno->fname[0] = '\0';
+            f_stat_cnt = 1;  // position unknown: rewind next time
+            return fr;
+        }
         if (fno->fname[0] == '\0') {
             printf("Invalid empty name\n\r");
             res = FR_INVALID_NAME;
@@ -99,7 +109,7 @@ static FRESULT idx_f_stat(uint16_t idx, FILINFO* fno)
                 printf("ERROR: idx_f_stat invalid name\n\r");
                 break;
             }
-            f_readdir(&dir, 0);
+            if (f_readdir(&dir, 0) != FR_OK) { break; }
             f_stat_cnt = 1;
             continue;
         }
@@ -110,19 +120,19 @@ static FRESULT idx_f_stat(uint16_t idx, FILINFO* fno)
         } else if (!(target & TGT_FILES)) { // Dir Only
             if (!(fno->fattrib & AM_DIR)) continue;
         }
-        if (f_stat_cnt++ >= idx) break;
+        if (f_stat_cnt++ >= idx) { res = FR_OK; break; }
     }
     return res;
 }
 
 static void set_sorted(uint16_t pos) /* pos is entry_list's position, not index number */
 {
-    *(sorted_flg + (pos/32)) |= 1<<(pos%32);
+    *(sorted_flg + (pos/32)) |= 1u<<(pos%32);
 }
 
 static int get_sorted(uint16_t pos) /* pos is entry_list's position, not index number */
 {
-    return ((*(sorted_flg + (pos/32)) & 1<<(pos%32)) != 0);
+    return ((*(sorted_flg + (pos/32)) & 1u<<(pos%32)) != 0);
 }
 
 static int get_range_full_sorted(uint16_t start, uint16_t end_1)
@@ -145,12 +155,12 @@ static int get_range_full_unsorted(uint16_t start, uint16_t end_1)
 
 static void set_is_file(uint16_t idx)
 {
-    *(is_file_flg + (idx/32)) |= 1<<(idx%32);
+    *(is_file_flg + (idx/32)) |= 1u<<(idx%32);
 }
 
 static int get_is_file(uint16_t idx)
 {
-    return ((*(is_file_flg + (idx/32)) & 1<<(idx%32)) != 0);
+    return ((*(is_file_flg + (idx/32)) & 1u<<(idx%32)) != 0);
 }
 
 static void idx_qsort_entry_list_by_range(uint16_t r_start, uint16_t r_end_1, uint16_t start, uint16_t end_1)
@@ -279,12 +289,13 @@ static void idx_qsort_entry_list_by_range(uint16_t r_start, uint16_t r_end_1, ui
 
 static uint16_t idx_get_size(int target)
 {
-    int16_t cnt = 1;
+    uint16_t cnt = 1;  // ".."
+    FATFS_ASSERT_OWNER();
     // Rewind directory index
-    f_readdir(&dir, 0);
+    if (f_readdir(&dir, 0) != FR_OK) { return cnt; }  // e.g. directory could not be opened: ".." only
     // Directory search completed with null character
     for (;;) {
-        f_readdir(&dir, &fno);
+        if (f_readdir(&dir, &fno) != FR_OK) { break; }  // read error: list what was read so far (fno is not updated)
         if (fno.fname[0] == '\0') break;
         if (fno.fname[0] == '.') continue;
         if (fno.fattrib & AM_HID) continue;
@@ -293,27 +304,33 @@ static uint16_t idx_get_size(int target)
         } else if (!(target & TGT_FILES)) { // Dir Only
             if (!(fno.fattrib & AM_DIR)) continue;
         }
+        if (cnt == UINT16_MAX) { break; }  // index type limit
         cnt++;
     }
     // Returns the number of entries read
     return cnt;
 }
 
-static void idx_sort_new(void)
+static void idx_sort_delete(void);
+
+// build the index of the opened directory; on allocation failure the list is empty (max_entry_cnt = 0)
+static FRESULT idx_sort_new(void)
 {
     int i, k;
-    max_entry_cnt = idx_get_size(target);
-    entry_list = (uint16_t*) malloc(sizeof(uint16_t) * max_entry_cnt);
-    if (entry_list == NULL) printf("malloc entry_list failed\n\r");
+    idx_sort_delete();  // never leak a previous list
+    uint16_t cnt = idx_get_size(target);
+    size_t flg_words = ((size_t) cnt + 31) / 32;
+    entry_list = (uint16_t*) malloc(sizeof(uint16_t) * cnt);
+    sorted_flg = (uint32_t*) calloc(flg_words, sizeof(uint32_t));
+    is_file_flg = (uint32_t*) calloc(flg_words, sizeof(uint32_t));
+    fast_fname_list = (char (*)[FFL_SZ]) malloc(sizeof(char[FFL_SZ]) * cnt);
+    if (entry_list == NULL || sorted_flg == NULL || is_file_flg == NULL || fast_fname_list == NULL) {
+        printf("ERROR: file_menu out of memory (%d entries)\n\r", (int) cnt);
+        idx_sort_delete();
+        return FR_NOT_ENOUGH_CORE;
+    }
+    max_entry_cnt = cnt;
     for (i = 0; i < max_entry_cnt; i++) entry_list[i] = i;
-    sorted_flg = (uint32_t*) malloc(sizeof(uint32_t) * (max_entry_cnt+31)/32);
-    if (sorted_flg == NULL) printf("malloc sorted_flg failed\n\r");
-    memset(sorted_flg, 0, sizeof(uint32_t) * (max_entry_cnt+31)/32);
-    is_file_flg = (uint32_t*) malloc(sizeof(uint32_t) * (max_entry_cnt+31)/32);
-    if (is_file_flg == NULL) printf("malloc is_file_flg failed\n\r");
-    memset(is_file_flg, 0, sizeof(uint32_t) * (max_entry_cnt+31)/32);
-    fast_fname_list = (char (*)[FFL_SZ]) malloc(sizeof(char[FFL_SZ]) * max_entry_cnt);
-    if (fast_fname_list == NULL) printf("malloc fast_fname_list failed\n\r");
     for (i = 0; i < max_entry_cnt; i++) {
         idx_f_stat(i, &fno);
         if (!(fno.fattrib & AM_DIR)) set_is_file(i);
@@ -332,14 +349,22 @@ static void idx_sort_new(void)
         printf("fast_fname_list[%d] = %4s, is_file = %d\r\n", i, temp_str, get_is_file(i));
         #endif // #ifdef DEBUG_FILE_MENU_LVL2
     }
+    return FR_OK;
 }
 
 static void idx_sort_delete(void)
 {
+    // no dangling pointers / stale count: every public function checks max_entry_cnt
+    max_entry_cnt = 0;
+    last_order = 0;
     free(entry_list);
     free(sorted_flg);
     free(fast_fname_list);
     free(is_file_flg);
+    entry_list = NULL;
+    sorted_flg = NULL;
+    fast_fname_list = NULL;
+    is_file_flg = NULL;
 }
 
 //==============================
@@ -361,6 +386,7 @@ FRESULT file_menu_init(uint8_t* fs_type)
         true  // use internal pullup
     };
 
+    FATFS_ASSERT_OWNER();
     pico_fatfs_set_config(&config);
     for (int i = 0; i < 5; i++) {
         fr = f_mount(&fs, "", 1); // fr: 0: mount successful, 1: mount failed
@@ -375,6 +401,7 @@ FRESULT file_menu_init(uint8_t* fs_type)
 
 FRESULT file_menu_deinit()
 {
+    FATFS_ASSERT_OWNER();
     FRESULT fr = f_unmount("");
     pico_fatfs_reboot_spi();
     return fr;
@@ -386,6 +413,7 @@ void file_menu_idle(void)
     static int up_down = 0;
     uint16_t r_start = 0;
     uint16_t r_end_1 = 0;
+    if (max_entry_cnt == 0) return;
     if (get_range_full_sorted(0, max_entry_cnt)) return;
     for (;;) {
         if (up_down & 0x1) {
@@ -428,6 +456,7 @@ void file_menu_sort_entry(uint16_t scope_start, uint16_t scope_end_1)
     uint16_t wing;
     uint16_t wing_start, wing_end_1;
     if (scope_start >= scope_end_1) return;
+    if (max_entry_cnt == 0) return;
     if (scope_start > max_entry_cnt - 1) scope_start = max_entry_cnt - 1;
     if (scope_end_1 > max_entry_cnt) scope_end_1 = max_entry_cnt;
     wing = (scope_end_1 - scope_start)*2;
@@ -461,13 +490,28 @@ TCHAR* file_menu_get_fname_ptr(uint16_t order)
     }
 }
 
+// Copy a UTF-8 string into str[size] with a terminator, never cutting a multi-byte character
+static void copy_utf8(char* str, const char* src, size_t size)
+{
+    if (size == 0) { return; }
+    size_t len = strlen(src);
+    if (len >= size) {
+        len = size - 1;
+        while (len > 0 && (((unsigned char) src[len]) & 0xc0) == 0x80) { len--; }  // back to a lead byte
+    }
+    memcpy(str, src, len);
+    str[len] = '\0';
+}
+
+// str is always terminated (at most size-1 characters are stored); "" on error
 FRESULT file_menu_get_fname(uint16_t order, char* str, uint16_t size)
 {
     FRESULT fr = FR_INVALID_PARAMETER;     /* FatFs return code */
+    if (size > 0) { str[0] = '\0'; }
     file_menu_sort_entry(order, order+5);
     if (order < max_entry_cnt) {
         fr = idx_f_stat(entry_list[order], &fno);
-        strncpy(str, fno.fname, size);
+        if (fr == FR_OK) { copy_utf8(str, fno.fname, size); }
         last_order = order;
     }
     return fr;
@@ -498,11 +542,20 @@ uint16_t file_menu_get_dir_num(void)
 
 int file_menu_match_ext(uint16_t order, const char* ext, size_t ext_size)
 {
-    char name[FF_MAX_LFN];
-    file_menu_get_fname(order, name, sizeof(name));
-    char* ext_pos = strrchr(name, '.');
+    const char* name = file_menu_get_fname_ptr(order);  // no copy: UTF-8 names can be up to FF_LFN_BUF bytes
+    const char* ext_pos = strrchr(name, '.');
     if (ext_pos) {
-        if (strncmp(ext_pos+1, ext, ext_size) == 0) { return 1; }
+        // whole extension, ASCII case-insensitive ("wav" matches .wav/.WAV/.Wav, not .wave)
+        ext_pos++;
+        if (strlen(ext_pos) != ext_size) { return 0; }
+        for (size_t i = 0; i < ext_size; i++) {
+            char a = ext_pos[i];
+            char b = ext[i];
+            if (a >= 'A' && a <= 'Z') { a += 'a' - 'A'; }
+            if (b >= 'A' && b <= 'Z') { b += 'a' - 'A'; }
+            if (a != b) { return 0; }
+        }
+        return 1;
     }
     return 0;
 }
@@ -528,40 +581,37 @@ uint16_t file_menu_get_ext_num_from_max(const char* ext, size_t ext_size, uint16
     return count;
 }
 
+// on error the list holds ".." only (or nothing if out of memory); safe to call without file_menu_close_dir()
 FRESULT file_menu_open_dir(const TCHAR* path)
 {
     FRESULT fr = FR_INVALID_PARAMETER;     /* FatFs return code */
     //fr = f_opendir(&dir, path);
+    FATFS_ASSERT_OWNER();
+    idx_sort_delete();
+    f_closedir(&dir);  // harmless if not open
     f_chdir(path);
-    fr = f_opendir(&dir, ".");
+    fr = f_opendir(&dir, ".");  // on failure dir is invalid and f_readdir() on it fails
     f_stat_cnt = 1;
     last_order = 0;
-    if (fr == FR_OK) {
-        idx_sort_new();
-    }
-    return fr;
+    FRESULT fr2 = idx_sort_new();
+    return (fr != FR_OK) ? fr : fr2;
 }
 
+// on error the list holds ".." only (or nothing if out of memory), never a stale count or freed lists
 FRESULT file_menu_ch_dir(uint16_t order)
 {
     FRESULT fr = FR_INVALID_PARAMETER;     /* FatFs return code */
-    if (order < max_entry_cnt) {
-        fr = idx_f_stat(entry_list[order], &fno);
-        f_closedir(&dir);
-        //printf("chdir %s\n\r", fno.fname);
-        f_chdir(fno.fname);
-        fr = f_opendir(&dir, ".");
-        idx_sort_delete();
-    }
+    if (order >= max_entry_cnt) { return fr; }  // nothing changed
+    fr = idx_f_stat(entry_list[order], &fno);
+    if (fr != FR_OK) { return fr; }  // name unknown: stay in the current directory
+    f_closedir(&dir);
+    //printf("chdir %s\n\r", fno.fname);
+    f_chdir(fno.fname);
+    fr = f_opendir(&dir, ".");  // on failure dir is invalid and f_readdir() on it fails
     f_stat_cnt = 1;
     last_order = 0;
-    //fr = f_opendir(&dir, path);
-    //f_chdir(path);
-    //fr = f_opendir(&dir, ".");
-    if (fr == FR_OK) {
-        idx_sort_new();
-    }
-    return fr;
+    FRESULT fr2 = idx_sort_new();  // frees the previous list first
+    return (fr != FR_OK) ? fr : fr2;
 }
 
 void file_menu_close_dir(void)
@@ -573,6 +623,7 @@ void file_menu_close_dir(void)
         printf("fast_fname_list[%d] = %4s\r\n", i, temp_str);
     }
     */
+    FATFS_ASSERT_OWNER();
     idx_sort_delete();
     f_closedir(&dir);
 }

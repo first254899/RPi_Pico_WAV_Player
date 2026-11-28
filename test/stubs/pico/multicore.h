@@ -1,5 +1,6 @@
 // Host stub: core1 is a std::thread
 #pragma once
 #include <thread>
+#include "pico.h"
 static inline void multicore_reset_core1() {}
-static inline void multicore_launch_core1(void (*entry)()) { std::thread(entry).detach(); }
+static inline void multicore_launch_core1(void (*entry)()) { std::thread([entry] { stub_core_num = 1; entry(); }).detach(); }

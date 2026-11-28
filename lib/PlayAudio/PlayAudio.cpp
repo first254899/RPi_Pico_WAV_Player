@@ -11,6 +11,7 @@
 #include "pico/stdlib.h"
 
 #include "audio_codec.h"
+#include "fatfs_owner.h"
 #include "ReadBuffer.h"
 
 //#define DEBUG_PLAYAUDIO
@@ -18,6 +19,7 @@
 spin_lock_t* PlayAudio::spin_lock = nullptr;
 audio_buffer_pool_t* PlayAudio::ap = nullptr;
 uint8_t PlayAudio::volume = 65;
+volatile uint32_t PlayAudio::rdbufUnderrunCount = 0;
 
 const int32_t PlayAudio::vol_table[101] = {
     0, 4, 8, 12, 16, 20, 24, 27, 29, 31,
@@ -42,6 +44,7 @@ void PlayAudio::initialize()
 void PlayAudio::finalize()
 {
     spin_lock_unclaim(spin_lock_get_num(spin_lock));
+    ap = nullptr;  // decode() must not use the pool after deinit
     i2s_audio_deinit();
 }
 
@@ -65,7 +68,13 @@ uint8_t PlayAudio::getVolume()
     return volume;
 }
 
+uint32_t PlayAudio::getRdbufUnderrunCount()
+{
+    return rdbufUnderrunCount;
+}
+
 PlayAudio::PlayAudio() : bound(false), playing(false), paused(false), rdbufWarning(false),
+    playGen(0), isrSilent(true), isrPlayGen(0),
     channels(2), sampFreq(0), bitRateKbps(44100*16*2/1000), bitsPerSample(16),
     samplesPlayed(0), reinitI2s(false), levelL(0.0), levelR(0.0)
 {
@@ -89,6 +98,7 @@ bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
 {
     stop();  // release previous file if the track has finished by itself
     FRESULT fr;
+    FATFS_ASSERT_OWNER();  // core0 owns FatFs until reqBind() (see fatfs_owner.h)
     fr = f_open(&fil, (TCHAR *) filename, FA_READ);
     if (fr != FR_OK) {
         printf("ERROR: f_open %s failed (fr = %d)\r\n", filename, static_cast<int>(fr));
@@ -117,6 +127,7 @@ bool PlayAudio::play(const char* filename, size_t fpos, uint32_t samplesPlayed)
     }
 
     // Don't manipulate rdbuf after playing = true because decode callback handles it
+    playGen = playGen + 1;  // decode() fades the new track in from silence
     playing = true;
     paused = false;
     rdbufWarning = false;
@@ -128,18 +139,42 @@ void PlayAudio::pause(bool flg)
     paused = flg;
 }
 
-// not to be called from decode() (ISR) because it waits for core1
+// not to be called from decode() (ISR) because it waits for decode() and core1
 void PlayAudio::stop()
 {
-    // stop playing at first to avoid blank noise, decode() doesn't touch rdbuf after this
+    // stop playing at first, decode() fades out with the data already in rdbuf
     playing = false;
     paused = false;
 
-    // it takes some time to stop ReadBuffer due to secondary buffer
     if (bound) {
-        rdbuf->reqUnbind();
-        f_close(&fil);
+        waitSilent();
+        // decode() runs on this core (I2S DMA IRQ), so it is never in the middle of a call here,
+        // and it doesn't touch rdbuf any more once bound is false
         bound = false;
+        // it takes some time to stop ReadBuffer due to secondary buffer
+        rdbuf->reqUnbind();  // core1 hands FatFs back to core0 at the latest here
+        FATFS_ASSERT_OWNER();
+        f_close(&fil);
+    }
+}
+
+// length of fades: about 3 ms, at least 64 frames, at most one I2S buffer
+uint32_t PlayAudio::rampFrames() const
+{
+    uint32_t frames = sampFreq * 3 / 1000;
+    if (frames < 64) { frames = 64; }
+    if (frames > static_cast<uint32_t>(SAMPLES_PER_BUFFER)) { frames = SAMPLES_PER_BUFFER; }
+    return frames;
+}
+
+// thread context: wait until decode() has faded out (the fade is produced within the next decode() call)
+// bounded: two I2S buffer periods + 10 ms, in case decode() isn't called (e.g. another codec is selected)
+void PlayAudio::waitSilent()
+{
+    uint32_t periodMs = (sampFreq > 0) ? SAMPLES_PER_BUFFER * 1000 / sampFreq + 1 : 100;
+    absolute_time_t until = make_timeout_time_ms(periodMs * 2 + 10);
+    while (!isrSilent && !time_reached(until)) {
+        best_effort_wfe_or_timeout(until);  // woken by the I2S DMA interrupt
     }
 }
 
@@ -254,6 +289,7 @@ void PlayAudio::decode()
     give_audio_buffer(ap, buffer);
     levelL = 0.0;
     levelR = 0.0;
+    isrSilent = true;
 
     #ifdef DEBUG_PLAYAUDIO
     uint32_t time = to_ms_since_boot(get_absolute_time()) - start;
@@ -265,8 +301,9 @@ bool PlayAudio::isMuteCondition()
 {
     if (!playing || paused) { return true; }
     if (!rdbufWarning && rdbuf->isNearEmpty()) {
-        rdbufWarning = true;
-        printf("AUDIO::rdbuf near empty. insert instant mute\r\n");
+        rdbufWarning = true;  // insert instant mute
+        // no printf here: decode() runs in the I2S DMA IRQ. The main loop logs the count
+        rdbufUnderrunCount = rdbufUnderrunCount + 1;
     } else if (rdbufWarning && rdbuf->isFilled()) {  // not isFull(): queue never gets full again near the end
         rdbufWarning = false;
     }

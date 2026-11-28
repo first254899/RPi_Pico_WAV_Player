@@ -8,6 +8,7 @@ if (NOT TARGET file_menu)
     target_link_libraries(file_menu INTERFACE
         pico_stdlib
         pico_fatfs
+        fatfs_owner
     )
     target_include_directories(file_menu INTERFACE ${CMAKE_CURRENT_LIST_DIR})
 endif()

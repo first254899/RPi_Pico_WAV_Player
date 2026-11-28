@@ -14,6 +14,7 @@
 #include <cstring>
 #include <tuple>
 
+#include "fatfs_owner.h"
 #include "utf_conv.h"
 
 TagRead::TagRead()
@@ -80,6 +81,7 @@ int TagRead::loadFile(const char* filename)
     clearMP4_ilst();
 
     FRESULT fr;
+    FATFS_ASSERT_OWNER();  // core0, never while a track is streaming (see fatfs_owner.h)
 	fr = f_open(&fil, (TCHAR*) filename, FA_READ);
     if (fr != FR_OK) {
         return 1;
@@ -140,10 +142,12 @@ int TagRead::GetID3HeadersFull(FIL& infile, int testfail, id31*& id31save, id32*
   
     // read in to buffer
     input = (char*) malloc(sizeof(id31));
+    if (input == NULL) { return -1; }
     fr = f_read(&infile, input, sizeof(id31), &br);
     result = br;
     if (result != sizeof(id31)) {
         printf("Read fail: expected %d bytes but got %d\n", sizeof(id31), result);
+        free(input);
         return -1;
     }
 
@@ -206,6 +210,11 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
     // read in first 10 bytes
     buffer = (uint8_t*) calloc(1, 11);
     id32header = (id32*) calloc(1, sizeof(id32));
+    if (buffer == NULL || id32header == NULL) {
+        free(buffer);
+        free(id32header);
+        return NULL;
+    }
     fr = f_read(infile, buffer, 10, &br);
     result = br;
 
@@ -214,6 +223,8 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
     // make sure we have 10 bytes
     if (result != 10) {
         printf("ID3v2 read failed, expected 10 bytes, read only %d\n", result);
+        free(buffer);
+        free(id32header);
         return NULL;
     }
     // do the comparison
@@ -250,6 +261,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
 
     if ((id32header->flags & 0x7f) != 0) {
         //printf("Flags set, can't handle :(\n");
+        free(id32header);  // no frames yet
         return NULL;
     }
     if ((id32header->flags & (1<<7)) != 0) {
@@ -266,17 +278,18 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
         while (filepos - 10 < id32header->size + pos) {
             // make space for new frame
             id322frame* frame = (id322frame*) calloc(1, sizeof(id322frame));
+            if (frame == NULL) { return ID32Fail(id32header, NULL, NULL); }
             frame->next = NULL;
             // populate from file
             fr = f_read_unsync(infile, frame, 6, &br, unsync);
             result = br;
             if (result != 6) {
                 printf("Expected to read 6 bytes, only got %d, from point %d in the file\n", result, filepos);
-                // not freeing this time, but we should deconstruct in future
-                return NULL;
+                return ID32Fail(id32header, frame, NULL);
             }
             // make sure we haven't got a blank tag
             if (frame->ID[0] == 0) {
+                free(frame);
                 break;
             }
             // update file cursor
@@ -297,6 +310,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             if (frame->size < frame_size_limit) {
                 // read in the data
                 frame->data = (char*) calloc(1, frame->size);
+                if (frame->data == NULL && frame->size != 0) { return ID32Fail(id32header, frame, frame->data); }
                 fr = f_read_unsync(infile, frame->data, frame->size, &br, unsync);
                 result = br;
                 frame->isUnsynced = unsync;
@@ -306,6 +320,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
                 printf("frameID: %c%c%c size over %d\n", frame->ID[0], frame->ID[1], frame->ID[2], frame->size);
                 */
                 frame->data = (char*) calloc(1, frame_start_bytes); // for frame parsing
+                if (frame->data == NULL) { return ID32Fail(id32header, frame, frame->data); }
                 f_read_unsync(infile, frame->data, frame_start_bytes, &br, unsync);
                 if (f_lseek(infile, frame->pos + frame->size) == FR_OK) {
                     result = frame->size;
@@ -319,7 +334,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             filepos = f_tell(infile);
             if (result != (UINT) frame->size) {
                 printf("Expected to read %d bytes, only got %d\n", frame->size, result);
-                return NULL;
+                return ID32Fail(id32header, frame, frame->data);
             }
             // add to end of queue
             if (id32header->firstframe == NULL) {
@@ -335,22 +350,23 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
         while (filepos - 10 < id32header->size + pos) {
             // make space for new frame
             id32frame* frame = (id32frame*) calloc(1, sizeof(id32frame));
+            if (frame == NULL) { return ID32Fail(id32header, NULL, NULL); }
             frame->next = NULL;
             // populate from file
             fr = f_read_unsync(infile, frame, 10, &br, unsync);
             result = br;
             if (result != 10) {
                 printf("Expected to read 10 bytes, only got %d, from point %d in the file\n", result, filepos);
-                // not freeing this time, but we should deconstruct in future
-                return NULL;
+                return ID32Fail(id32header, frame, NULL);
             }
             // make sure we haven't got a blank tag
             if (frame->ID[0] == 0) {
+                free(frame);
                 break;
             }
             if((frame->ID[0] & 0xff) == 0xff) {
                 printf("Size is wrong 1:(\n");
-                return NULL;
+                return ID32Fail(id32header, frame, NULL);
 
                 // fix size
                 /*
@@ -384,6 +400,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             if (frame->size < frame_size_limit) {
                 // read in the data
                 frame->data = (char*) calloc(1, frame->size);
+                if (frame->data == NULL && frame->size != 0) { return ID32Fail(id32header, frame, frame->data); }
                 fr = f_read_unsync(infile, frame->data, frame->size, &br, unsync);
                 result = br;
                 frame->isUnsynced = unsync;
@@ -393,6 +410,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
                 printf("frameID: %c%c%c%c size over at pos %d size %d\n", frame->ID[0], frame->ID[1], frame->ID[2], frame->ID[3], frame->pos, frame->size);
                 */
                 frame->data = (char*) calloc(1, frame_start_bytes); // for frame parsing
+                if (frame->data == NULL) { return ID32Fail(id32header, frame, frame->data); }
                 f_read_unsync(infile, frame->data, frame_start_bytes, &br, unsync);
                 if (f_lseek(infile, frame->pos + frame->size) == FR_OK) {
                     result = frame->size;
@@ -406,7 +424,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             filepos = f_tell(infile);
             if (result != (UINT) frame->size) {
                 printf("Expected to read %d bytes, only got %d\n", frame->size, result);
-                return NULL;
+                return ID32Fail(id32header, frame, frame->data);
             }
             // add to end of queue
             if (id32header->firstframe == NULL) {
@@ -424,14 +442,14 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             // make space for new frame
             int i;
             id32frame* frame = (id32frame*) calloc(1, sizeof(id32frame));
+            if (frame == NULL) { return ID32Fail(id32header, NULL, NULL); }
             frame->next = NULL;
             // populate from file
             fr = f_read_unsync(infile, frame, 10, &br, unsync);
             result = br;
             if (result != 10) {
                 printf("Expected to read 10 bytes, only got %d, from point %d in the file\n", result, filepos);
-                // not freeing this time, but we should deconstruct in future
-                return NULL;
+                return ID32Fail(id32header, frame, NULL);
             }
             // make sure we haven't got a blank tag
             if (frame->ID[0] == 0) {
@@ -440,7 +458,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             }
             if((frame->ID[0] & 0xff) == 0xff) {
                 printf("Size is wrong 2:(\n");
-                return NULL;
+                return ID32Fail(id32header, frame, NULL);
 
                 // fix size
                 /*
@@ -474,12 +492,14 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             if (frame->size < frame_size_limit) {
                 // read in the data
                 frame->data = (char*) calloc(1, frame->size);
+                if (frame->data == NULL && frame->size != 0) { return ID32Fail(id32header, frame, frame->data); }
                 fr = f_read_unsync(infile, frame->data, frame->size, &br, unsync);
                 result = br;
                 frame->isUnsynced = unsync;
                 frame->hasFullData = true;
             } else { // give up to get full contents due to size over
                 frame->data = (char*) calloc(1, frame_start_bytes); // for frame parsing
+                if (frame->data == NULL) { return ID32Fail(id32header, frame, frame->data); }
                 fr = f_read_unsync(infile, frame->data, frame_start_bytes, &br, unsync);
                 result = br;
                 if (f_lseek(infile, frame->pos + frame->size) == FR_OK) {
@@ -494,7 +514,7 @@ id32* TagRead::ID32Detect(FIL* infile, const size_t pos)
             filepos = f_tell(infile);
             if (result != (UINT) frame->size) {
                 printf("Expected to read %d bytes, only got %d\n", frame->size, result);
-                return NULL;
+                return ID32Fail(id32header, frame, frame->data);
             }
             // add to end of queue
             if (id32header->firstframe == NULL) {
@@ -515,7 +535,7 @@ int TagRead::getUTF8Track(char* str, size_t size)
     if (GetMP4BoxUTF8("\xa9""trk", str, size)) { return 1; }
     if (GetMP4BoxUTF8("trkn", str, size)) { return 1; }
     if (GetID32UTF8("TRK", "TRCK", str, size)) { return 1; }
-    if (strlen(id3v1->title) && size >= 4) { // check titlte because track is unsigned char
+    if (id3v1 && strlen(id3v1->title) && size >= 4) { // check titlte because track is unsigned char
         sprintf(str, "%d", id3v1->tracknum);
         return 1;
     }
@@ -526,7 +546,7 @@ int TagRead::getUTF8Title(char* str, size_t size)
 {
     if (GetMP4BoxUTF8("\xa9""nam", str, size)) { return 1; }
     if (GetID32UTF8("TT2", "TIT2", str, size)) { return 1; }
-    if (strlen(id3v1->title)) {
+    if (id3v1 && strlen(id3v1->title)) {
         memset(str, 0, size);
         strncpy(str, id3v1->title, size - 1);
         return 1;
@@ -538,7 +558,7 @@ int TagRead::getUTF8Album(char* str, size_t size)
 {
     if (GetMP4BoxUTF8("\xa9""alb", str, size)) { return 1; }
     if (GetID32UTF8("TAL", "TALB", str, size)) { return 1; }
-    if (strlen(id3v1->album)) {
+    if (id3v1 && strlen(id3v1->album)) {
         memset(str, 0, size);
         strncpy(str, id3v1->album, size - 1);
         return 1;
@@ -550,7 +570,7 @@ int TagRead::getUTF8Artist(char* str, size_t size)
 {
     if (GetMP4BoxUTF8("\xa9""ART", str, size)) { return 1; }
     if (GetID32UTF8("TP1", "TPE1", str, size)) { return 1; }
-    if (strlen(id3v1->artist)) {
+    if (id3v1 && strlen(id3v1->artist)) {
         memset(str, 0, size);
         strncpy(str, id3v1->artist, size - 1);
         return 1;
@@ -562,7 +582,7 @@ int TagRead::getUTF8Year(char* str, size_t size)
 {
     if (GetMP4BoxUTF8("\xa9""day", str, size)) { return 1; }
     if (GetID32UTF8("TYE", "TYER", str, size)) { return 1; }
-    if (strlen(id3v1->year)) {
+    if (id3v1 && strlen(id3v1->year)) {
         memset(str, 0, size);
         strncpy(str, id3v1->year, size - 1);
         return 1;
@@ -890,9 +910,19 @@ void TagRead::ID32Print(id32* id32header)
     }
 }
 
+// error exit of ID32Detect(): free the frame being parsed (not linked yet) and everything linked so far
+id32* TagRead::ID32Fail(id32* id32header, void* frame, char* frameData)
+{
+    free(frameData);
+    free(frame);
+    ID32Free(id32header);
+    return NULL;
+}
+
 void TagRead::ID32Free(id32* id32header)
 {
-    if (id32header->version[0] == 3) {
+    if (id32header == NULL) { return; }
+    if (id32header->version[0] == 3 || id32header->version[0] == 4) {  // same frame layout (v2.4 frames leaked before)
         id32frame* bonar=id32header->firstframe;
         while (bonar != NULL) {
             id32frame* next = bonar->next;
@@ -916,6 +946,7 @@ int TagRead::ID31Detect(char* header, id31** id31header)
 {
     char test[4];
     *id31header = (id31*) calloc(sizeof(id31), 1);
+    if (*id31header == NULL) { return 0; }
     memcpy(test, header, 3);
     test[3] = 0;
     // make sure TAG is present
@@ -955,6 +986,7 @@ bool TagRead::GetID3v2FromRiffChunk(FIL& file, chunk_map_t& chunk_list, id32*& i
         riff_chunk_t& id3_chunk = it->second;
         id32* id32header = ID32Detect(&fil, id3_chunk.body_pos()); // For ID3v2.x only
         if (id32header) {
+            ID32Free(id32save);  // replace (not leak) one found at the start of the file
             id32save = id32header;
             return true;
         }
@@ -970,6 +1002,10 @@ bool TagRead::GetListFromRiffChunk(FIL& file, chunk_map_t& chunk_list, id31*& id
         riff_t riff;
         auto sub_chunk_list = findRiff(fil, list_chunk.pos, "LIST", riff);
         if (riff.fmt_id == "INFO") {
+            if (id31save == NULL) {  // GetID3HeadersFull() failed early (file shorter than sizeof(id31))
+                id31save = (id31*) calloc(sizeof(id31), 1);
+                if (id31save == NULL) { return false; }
+            }
             // copy LIST INFO data to ID3v1 member (note that ID3v1 members don't finish with '\0')
             std::vector<std::tuple<const char*, char*, size_t>> list_text_table = {
                 {"IART", id31save->artist, 128},

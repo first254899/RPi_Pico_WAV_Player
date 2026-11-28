@@ -23,7 +23,7 @@ FRESULT file_menu_ch_dir(uint16_t order);
 void file_menu_close_dir(void);
 uint16_t file_menu_get_num(void);
 uint16_t file_menu_get_dir_num(void);
-int file_menu_match_ext(uint16_t order, const char* ext, size_t ext_size); // ext: "mp3", "wav" (ext does not include ".")
+int file_menu_match_ext(uint16_t order, const char* ext, size_t ext_size); // ext: "mp3", "wav" (ext does not include "."), whole extension, ASCII case-insensitive
 uint16_t file_menu_get_ext_num(const char* ext, size_t ext_size); // ext: "mp3", "wav" (ext does not include ".")
 uint16_t file_menu_get_ext_num_from_max(const char* ext, size_t ext_size, uint16_t max_order); // ext: "mp3", "wav" (ext does not include ".")
 void file_menu_full_sort(void);

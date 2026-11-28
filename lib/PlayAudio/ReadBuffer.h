@@ -14,6 +14,8 @@
 //=================================
 // Interface of ReadBuffer Class
 //=================================
+// core0 (thread and decode() in the I2S DMA IRQ) consumes, core1 reads the bound file with FatFs.
+// core1 owns FatFs while it streams: see fatfs_owner.h for the rule.
 class ReadBuffer
 {
 public:
@@ -34,10 +36,12 @@ public:
     bool isNearEmpty();
     bool isEof();
     bool isError();
+    static uint32_t getZeroFillCount();  // number of underruns filled with zeros (for logging outside the ISR)
 private:
     static constexpr size_t SECONDARY_BUFFER_SIZE = PlayAudio::RDBUF_SIZE - PlayAudio::RDBUF_THRESHOLD;
     static constexpr size_t NUM_SECONDARY_BUFFERS = 8;
     static ReadBuffer* _inst;  // Singleton instance
+    static volatile uint32_t _zeroFillCount;  // incremented by fill(), which may run in the ISR
     uint8_t secondaryBuffer[SECONDARY_BUFFER_SIZE * NUM_SECONDARY_BUFFERS];
     typedef struct _secondaryBufferItem_t {
         uint8_t* ptr;

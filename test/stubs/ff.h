@@ -1,16 +1,19 @@
-// Host stub of the FatFs subset used by ReadBuffer, with fault injection and access checks
+// Host stub of the FatFs subset used by ReadBuffer and TagRead, with fault injection and access checks
 #pragma once
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <map>
+#include <string>
 #include <thread>
 #include <vector>
 
 typedef unsigned int UINT;
 typedef uint64_t FSIZE_t;
 typedef char TCHAR;
-typedef enum { FR_OK = 0, FR_DISK_ERR = 1, FR_INT_ERR = 2 } FRESULT;
+typedef enum { FR_OK = 0, FR_DISK_ERR = 1, FR_INT_ERR = 2, FR_NO_FILE = 4 } FRESULT;
+#define FA_READ 0x01
 
 typedef struct {
     const std::vector<uint8_t>* file = nullptr;
@@ -42,7 +45,7 @@ static inline FRESULT f_read(FIL* fp, void* buf, UINT btr, UINT* br)
         n = (fp->failReadAt > fp->fptr) ? static_cast<UINT>(fp->failReadAt - fp->fptr) : 0;
         fr = FR_DISK_ERR;
     }
-    memcpy(buf, fp->file->data() + fp->fptr, n);
+    if (n > 0) { memcpy(buf, fp->file->data() + fp->fptr, n); }
     fp->fptr += n;
     FSIZE_t end = fp->fptr;
     FSIZE_t prev = fp->maxReadEnd.load();
@@ -50,3 +53,23 @@ static inline FRESULT f_read(FIL* fp, void* buf, UINT btr, UINT* br)
     *br = n;
     return fr;
 }
+
+static inline FSIZE_t f_tell(FIL* fp) { return fp->fptr; }
+
+// named files for f_open() (TagRead)
+inline std::map<std::string, std::vector<uint8_t>>& stub_files()
+{
+    static std::map<std::string, std::vector<uint8_t>> files;
+    return files;
+}
+static inline FRESULT f_open(FIL* fp, const TCHAR* path, int /*mode*/)
+{
+    auto it = stub_files().find(path);
+    if (it == stub_files().end()) { return FR_NO_FILE; }
+    fp->file = &it->second;
+    fp->fptr = 0;
+    fp->failReadAt = UINT64_MAX;
+    fp->failSeek = false;
+    return FR_OK;
+}
+static inline FRESULT f_close(FIL* fp) { fp->file = nullptr; return FR_OK; }
