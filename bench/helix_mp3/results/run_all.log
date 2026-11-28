@@ -1,0 +1,54 @@
+   text	   data	    bss	    dec	    hex	filename
+ 528576	   2400	   5192	 536168	  82e68	/tmp/helix-emu/an505/helix_bench_an505.elf
+an505 clip 128k frames 308 errors 0 hash 0x4b669ce9 OK heap 23816 B
+an505 clip 320k frames 308 errors 0 hash 0xab75bc48 OK heap 23816 B
+
+=== helix_bench_rp2040_emu (HELIX_PORT_C64, default), Helix MP3 (libhelix-mp3), cycles per MP3Decode() call [EMULATED: SysTick of the emulator's cycle model, not real hardware] ===
+decoder heap 23816 B, main stack high-water 972 B (includes the benchmark itself)
+clip  sys_MHz frames err     min_cyc     avg_cyc     max_cyc  avg_us  CPU%avg CPU%max  wall_ms  pcm
+128k    125.0    308   0     2492826     2640691     2733961   21126    80.9    83.7     6700  OK
+320k    125.0    308   0     2574005     2811370     2885657   22491    86.1    88.4     7120  OK
+frame = 1152 samples @ 44.1 kHz = 26.12 ms; CPU% = cycles / (26.12 ms * sys clock)
+BENCH DONE
+[rp2040js] bench_cycles hits 1232, decode windows 616, total core cycles 1727929783, host 43.611 s
+[rp2040js] clip 0: frames 308 cycles(0ws) min 2493034 avg 2640898 max 2734169 | XIP accesses avg 2104468 misses min 2229 avg 2753 max 3967 (miss rate 0.13 %) | +50cyc/miss avg 2778525 max 2902365 | +70cyc/miss avg 2833576 max 2971885
+[rp2040js] clip 1: frames 308 cycles(0ws) min 2574212 avg 2811578 max 2885865 | XIP accesses avg 2243916 misses min 2601 avg 2936 max 3736 (miss rate 0.13 %) | +50cyc/miss avg 2958360 max 3047565 | +70cyc/miss avg 3017073 max 3112245
+
+=== helix_bench_rp2040_m0_emu (HELIX_PORT_M0, default), Helix MP3 (libhelix-mp3), cycles per MP3Decode() call [EMULATED: SysTick of the emulator's cycle model, not real hardware] ===
+decoder heap 23816 B, main stack high-water 2208 B (includes the benchmark itself)
+clip  sys_MHz frames err     min_cyc     avg_cyc     max_cyc  avg_us  CPU%avg CPU%max  wall_ms  pcm
+128k    125.0    308   0     3721068     3873486     3971388   30988   118.6   121.6     9738  OK
+320k    125.0    308   0     3804035     4042380     4114178   32339   123.8   126.0    10154  OK
+frame = 1152 samples @ 44.1 kHz = 26.12 ms; CPU% = cycles / (26.12 ms * sys clock)
+BENCH DONE
+[rp2040js] bench_cycles hits 1232, decode windows 616, total core cycles 2486776771, host 75.6 s
+[rp2040js] clip 0: frames 308 cycles(0ws) min 3721276 avg 3873694 max 3971596 | XIP accesses avg 3103561 misses min 24414 avg 25126 max 26555 (miss rate 0.81 %) | +50cyc/miss avg 5129991 max 5282271 | +70cyc/miss avg 5632510 max 5812111
+[rp2040js] clip 1: frames 308 cycles(0ws) min 3804243 avg 4042588 max 4114386 | XIP accesses avg 3242821 misses min 24596 avg 25374 max 27246 (miss rate 0.78 %) | +50cyc/miss avg 5311297 max 5408386 | +70cyc/miss avg 5818781 max 5942918
+| model | clip | memory | cycles/frame min / avg / max | CPU % avg (max) @96 / 133 / 150 / 200 MHz |
+|---|---|---|---|---|
+| RP2040 M0+, C64 port (rp2040js) | 128k | SRAM (0 wait) | 2,493,034 / 2,640,898 / 2,734,169 | 105 (109) / 76 (79) / 67 (70) / 51 (52) |
+| RP2040 M0+, C64 port (rp2040js) | 128k | XIP, +50/miss | 2,633,684 / 2,778,525 / 2,902,365 | 111 (116) / 80 (84) / 71 (74) / 53 (56) |
+| RP2040 M0+, C64 port (rp2040js) | 128k | XIP, +70/miss | 2,689,944 / 2,833,576 / 2,971,885 | 113 (119) / 82 (86) / 72 (76) / 54 (57) |
+| RP2040 M0+, C64 port (rp2040js) | 128k | (XIP misses) | misses avg 2,753 max 3,967 | |
+| RP2040 M0+, C64 port (rp2040js) | 320k | SRAM (0 wait) | 2,574,212 / 2,811,578 / 2,885,865 | 112 (115) / 81 (83) / 72 (74) / 54 (55) |
+| RP2040 M0+, C64 port (rp2040js) | 320k | XIP, +50/miss | 2,726,212 / 2,958,360 / 3,047,565 | 118 (122) / 85 (88) / 75 (78) / 57 (58) |
+| RP2040 M0+, C64 port (rp2040js) | 320k | XIP, +70/miss | 2,787,012 / 3,017,073 / 3,112,245 | 120 (124) / 87 (90) / 77 (79) / 58 (60) |
+| RP2040 M0+, C64 port (rp2040js) | 320k | (XIP misses) | misses avg 2,936 max 3,736 | |
+| RP2040 M0+, M0 port (rp2040js) | 128k | SRAM (0 wait) | 3,721,276 / 3,873,694 / 3,971,596 | 154 (158) / 111 (114) / 99 (101) / 74 (76) |
+| RP2040 M0+, M0 port (rp2040js) | 128k | XIP, +50/miss | 4,941,976 / 5,129,991 / 5,282,271 | 205 (211) / 148 (152) / 131 (135) / 98 (101) |
+| RP2040 M0+, M0 port (rp2040js) | 128k | XIP, +70/miss | 5,430,256 / 5,632,510 / 5,812,111 | 225 (232) / 162 (167) / 144 (148) / 108 (111) |
+| RP2040 M0+, M0 port (rp2040js) | 128k | (XIP misses) | misses avg 25,126 max 26,555 | |
+| RP2040 M0+, M0 port (rp2040js) | 320k | SRAM (0 wait) | 3,804,243 / 4,042,588 / 4,114,386 | 161 (164) / 116 (118) / 103 (105) / 77 (79) |
+| RP2040 M0+, M0 port (rp2040js) | 320k | XIP, +50/miss | 5,034,043 / 5,311,297 / 5,408,386 | 212 (216) / 153 (156) / 136 (138) / 102 (104) |
+| RP2040 M0+, M0 port (rp2040js) | 320k | XIP, +70/miss | 5,525,963 / 5,818,781 / 5,942,918 | 232 (237) / 167 (171) / 149 (152) / 111 (114) |
+| RP2040 M0+, M0 port (rp2040js) | 320k | (XIP misses) | misses avg 25,374 max 27,246 | |
+| RP2350 M33, DSP port (QEMU+m33cost) | 128k | SRAM, lo model | 312,875 / 360,274 / 415,924 | 14 (17) / 10 (12) / 9 (11) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 128k | SRAM, hi model | 471,526 / 542,040 / 627,621 | 22 (25) / 16 (18) / 14 (16) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 128k | XIP, +50/miss, hi | 531,976 / 607,139 / 715,308 | 24 (29) / 17 (21) / 15 (18) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 128k | XIP, +70/miss, hi | 556,156 / 633,178 / 751,708 | 25 (30) / 18 (22) / 16 (19) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 128k | (instructions; XIP misses) | 341,633 insns avg; misses avg 1,302 max 2,464 | |
+| RP2350 M33, DSP port (QEMU+m33cost) | 320k | SRAM, lo model | 335,841 / 416,215 / 449,134 | 17 (18) / 12 (13) / 11 (11) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 320k | SRAM, hi model | 504,037 / 623,857 / 676,877 | 25 (27) / 18 (19) / 16 (17) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 320k | XIP, +50/miss, hi | 579,437 / 702,371 / 773,516 | 28 (31) / 20 (22) / 18 (20) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 320k | XIP, +70/miss, hi | 609,597 / 733,776 / 812,656 | 29 (32) / 21 (23) / 19 (21) / n/a |
+| RP2350 M33, DSP port (QEMU+m33cost) | 320k | (instructions; XIP misses) | 395,635 insns avg; misses avg 1,570 max 2,081 | |
